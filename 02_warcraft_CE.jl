@@ -16,946 +16,1048 @@ macro bind(def, element)
     #! format: on
 end
 
-# ╔═╡ 9eb65168-078c-44be-87bc-0444b6beac9b
-using InferOpt
-
-# ╔═╡ ae2d6a37-fcfa-4a9d-9d72-391e70328e3c
-using DecisionFocusedLearningBenchmarks
-
-# ╔═╡ 8e943ed2-9eff-425e-924f-149f82f02fdb
-using Flux
-
-# ╔═╡ f2770135-3dcf-45ed-8153-b9d5b6091126
-using LinearAlgebra: dot
-
-# ╔═╡ 8ea1ae20-d775-470e-a8f2-79a8a3bf26ca
-using JuMP, HiGHS
-
-# ╔═╡ 607a02db-854a-49ec-a010-60fb8e74a556
-using Zygote
-
-# ╔═╡ d8ba2596-6834-4bf5-adfb-df1afd49d064
-using Plots
-
-# ╔═╡ db4d6daf-980e-4483-9d6a-bfc8522a56dd
-using ProgressLogging
-
-# ╔═╡ 47f43ec9-0004-446c-8b85-cebfca4ae7af
+# ╔═╡ 08f2596a-4131-4b0c-9b86-487f6be4f726
 using PlutoUI, PlutoTeachingTools
 
-# ╔═╡ 94d354a2-f5d8-437a-ac19-ca657a5d28ea
+# ╔═╡ 80000669-972b-4af5-a480-7fd8c2474fb2
 begin
-	using LaTeXStrings: @L_str
-	using LinearAlgebra: norm
-	using Statistics: mean
-	using DifferentiableExpectations
-end
+    using Flux
+    using Graphs
+    using GridGraphs
+    using Images
+    using InferOpt
+    using LinearAlgebra
+    using Markdown: MD, Admonition, Code
+    using Metalhead
+    using NPZ
+    using Plots
+    using ProgressLogging
+    using Random
+end;
 
-# ╔═╡ 255082db-2cbc-45cb-ac99-b726b97cff9d
-using Markdown: MD, Admonition
+# ╔═╡ 5b8d73d2-e965-4950-a79e-91324f206b14
+using MLUtils
 
-# ╔═╡ d9a39939-a17a-4b69-8a66-9c14cdda0dda
-md"# Decision-Focused Learning: a Julia demo"
+# ╔═╡ 3caab09b-8a6d-43f2-980f-2d673ee499ab
+md"""
+# Pathfinding on Warcraft maps
+"""
 
-# ╔═╡ 49071561-3d84-4ada-9b1c-3f515a923487
+# ╔═╡ 0c9922e4-a7d0-4cbb-bcc4-32073d9eb50d
+md"""
+Imports all package dependencies (this may take a while to run the first time)
+"""
+
+# ╔═╡ 10c1ec66-768a-4a71-a08b-564d9a67221f
+TableOfContents(depth=3)
+
+# ╔═╡ b4382ccf-d4bc-4b46-918e-153989ef32be
+info(text; title="Info") = MD(Admonition("info", title, [text]));
+
+# ╔═╡ 911025ef-3d9e-4d07-a98d-8e4bc1f14961
 ChooseDisplayMode()
 
-# ╔═╡ 03e45e1a-dc8c-4558-b806-7c5d6b979a7f
-md"# I - Introduction"
+# ╔═╡ 3e9e496f-d67f-4208-b519-a44eae435f83
+warning_box(md"Before running the notebook, please download the [dataset](http://cermics.enpc.fr/~bouvierl/warcraft_TP/data.zip) and place it in a 
+`data` folder at the root of the repository.")
 
-# ╔═╡ 7a0a60d6-b8b8-400d-bafb-dc8c1051451c
+# ╔═╡ 189f8d87-b53f-4f73-811a-4ebea02a8be0
 md"""
-**Goals of this notebook**:
-- Show you how to implement and train a DFL policy in practice
-- Generic approach that can be applied to most problems
-- Showcase Julia programming, direct comparison with Python at the end
-- Give you some intuition on why things can work or not in practice
+In this practice session, we consider the Warcraft shortest path problem. 
+We have a dataset of Warcraft terrain images (source: [Vlastelica et al. (2020)](https://openreview.net/forum?id=BkevoJSYPB)), corresponding black-box cost functions, and optionally the label shortest path solutions and cell costs. 
+We want to learn the cost of the cells, using a neural network embedding, to predict good shortest paths on new test images.
+More precisely, each point in our dataset consists in:
+- an image of terrain ``I``.
+- a black-box cost function ``c`` to evaluate any given path (optional).
+- a label shortest path ``P`` from the top-left to the bottom-right corners (optional). 
+- the true cost of each cell of the grid (optional).
+We can exploit the images to approximate the true cell costs, so that when considering a new test image of terrain, we predict a good shortest path from its top-left to its bottom-right corners.
+The question is: how should we combine these features?
+We use `InferOpt` to learn the appropriate costs.
+
+In what follows, we'll build (and train) the following policy:
 """
 
-# ╔═╡ 03ffc934-bf27-404c-a9ab-cb769d66cbbb
-md"## The Julia programming language"
+# ╔═╡ 9098fe0b-4f5b-418d-a5f4-56e5d37c2f90
+load("./warcraft_pipeline.png")
 
-# ╔═╡ ee1de947-7460-4699-904d-79d0ea5ecd8d
-Resource(
-	"https://upload.wikimedia.org/wikipedia/commons/thumb/1/1f/Julia_Programming_Language_Logo.svg/800px-Julia_Programming_Language_Logo.svg.png",
-	:width => 400
-)
-
-# ╔═╡ debab8eb-499b-4a9a-b931-139de6dd5428
+# ╔═╡ f519ffe7-20e9-4f73-bb4a-c75968cc3726
 md"""
-- [https://julialang.org/](https://julialang.org/)
-- [Pluto notebooks](https://plutojl.org/) $\approx$ [Marimo notebooks](https://marimo.io/)
+## I - Dataset and plots
 """
 
-# ╔═╡ bac8d12f-5b91-45a1-9d41-092368ee2b46
-tip(md"""This file is a [Pluto](https://plutojl.org/) notebook. There are some differences respect to Jupyter notebooks you may be familiar with:
-- It's a regular julia code file.
-- **Self-contained** environment: packages are managed and installed directly in each notebook.
-- **Reactivity** and interactivity: cells are connected, such that when you modify a variable value, all other cells depending on it (i.e. using this variable) are automatically reloaded and their outputs updated. Feel free to modify some variables to observe the effects on the other cells. This allow interactivity with tools such as dropdown and sliders.
-- Some cells are hidden by default, if you want to see their content, just click on the eye icon on its top left.
-""")
-
-# ╔═╡ 4ed1e8a3-7089-47d3-8ea3-43b66cd902c4
-md"## JuliaDecisionFocusedLearning"
-
-# ╔═╡ feef9bf7-bd13-4302-b3a9-7ce0f226a38d
+# ╔═╡ 530e6977-3c75-4fae-b607-ac8ef8ee2b9f
 md"""
-- Open source Julia packages for decision-focused learning
-- GitHub organization: [https://github.com/JuliaDecisionFocusedLearning](https://github.com/JuliaDecisionFocusedLearning)
+We first give the path of the dataset folder:
 """
 
-# ╔═╡ 892670d9-5f1f-48df-b8d2-5b45da8ae6cb
-md"## InferOpt.jl"
+# ╔═╡ da56630b-2d19-47d2-a9e3-8ff94028b875
+decompressed_path = "data"
 
-# ╔═╡ c568247b-3f4c-47e9-897b-ca5ecd0aafb9
+# ╔═╡ d7370e3f-432c-4fef-b1cb-1104632a9c90
 md"""
-- GitHub repository: [https://github.com/JuliaDecisionFocusedLearning/InferOpt.jl](https://github.com/JuliaDecisionFocusedLearning/InferOpt.jl)
-- Documentation: [https://juliadecisionfocusedlearning.github.io/InferOpt.jl/stable/](https://juliadecisionfocusedlearning.github.io/InferOpt.jl/stable/)
-- Core package of the ecosystem
-- Implements building blocks for building differentiable CO layers and loss functions
-- Generic implementation
+### a) Gridgraphs
 """
 
-# ╔═╡ e4ffb5bb-e392-4810-a1bd-20ebe819a9e1
-md"## DecisionFocusedLearningBenchmarks.jl"
+# ╔═╡ 814e8a03-6604-45e8-8a76-af5426310503
+md"""For the purposes of this practice session, we consider grid graphs, as implemented in [GridGraphs.jl](https://github.com/gdalle/GridGraphs.jl).
+In such graphs, each vertex corresponds to a couple of coordinates ``(i, j)``, where ``1 \leq i \leq h`` and ``1 \leq j \leq w``.
+"""
 
-# ╔═╡ b7db666f-b136-4c0b-a812-84fa7826800d
+# ╔═╡ dfda5483-27b6-4c2f-92fa-85056213cb60
+h, w = 12, 12;
+
+# ╔═╡ fc3ee1d2-743f-4fc3-a283-7068593d42af
+g = GridGraph(rand(h, w); directions=QUEEN_DIRECTIONS)
+
+# ╔═╡ 2358c5ce-6dda-40f9-b431-451ea4c08af1
+g.vertex_weights
+
+# ╔═╡ 9e996433-1f27-486d-8ec6-4d270ed52a47
+md"""For convenience, `GridGraphs.jl` also provides custom functions to compute shortest paths efficiently. We use the Dijkstra implementation.
+Let us see what those paths look like.
+"""
+
+# ╔═╡ 061f9c2a-c35f-4c2e-81c0-4facce56b4dd
+grid_dijkstra(g, 1, nv(g))
+
+# ╔═╡ 4e35f281-b979-4c59-a6a0-ea353993a918
+grid_bellman_ford(g, 1, nv(g))
+
+# ╔═╡ 9eeb6cf2-dd95-4b47-a4ef-3fc160203eb9
+p = path_to_matrix(g, grid_dijkstra(g, 1, nv(g)))
+
+# ╔═╡ 5735b993-d8fc-4348-aa40-8c9cf90ec599
 md"""
-- GitHub repository: [https://github.com/JuliaDecisionFocusedLearning/DecisionFocusedLearningBenchmarks.jl](https://github.com/JuliaDecisionFocusedLearning/DecisionFocusedLearningBenchmarks.jl)
-- Documentation: [https://juliadecisionfocusedlearning.github.io/DecisionFocusedLearningBenchmarks.jl/stable/](https://juliadecisionfocusedlearning.github.io/DecisionFocusedLearningBenchmarks.jl/stable/)
-- Implementation of benchmark problems
-- Generic interface
+### b) Dataset functions
 """
 
-# ╔═╡ 5fdbf1e7-b18d-4905-9a49-f495a52f9084
-md"# II - Recap on Decision-Focused Learning"
-
-# ╔═╡ 80c500f3-742e-44c3-9b85-ba2f31a7d529
-md"## General setting"
-
-# ╔═╡ 2a55b892-f140-4cb8-8c4f-e28de0a68d14
-md"Parametrized **policy** $\pi_w$:"
-
-# ╔═╡ 0c57363b-456c-45fd-8f66-1a99f22fd1ff
+# ╔═╡ 3ea10dd4-3ce8-4e14-9505-03001d3dbafd
 md"""
-```math
-\xrightarrow[\text{$x$}]{\text{Instance}}
-\fbox{$\varphi_w$}
-\xrightarrow[\text{$\theta$}]{\text{Objective}}
-\fbox{$f$}
-\xrightarrow[\text{$y$}]{\text{Solution}}
-```
+The first dataset function `read_dataset` is used to read the images, cell costs and shortest path labels stored in files of the dataset folder.
 """
 
-# ╔═╡ b204c3bd-33a4-4a51-91f1-d6c9245506d1
+# ╔═╡ 9c00ae19-1a42-4349-a140-6182820f6f36
+"""
+	read_dataset(decompressed_path::String, dtype::String="train")
+
+Read the dataset of type `dtype` at the `decompressed_path` location.
+The dataset is made of images of Warcraft terrains, cell cost labels and shortest path labels.
+They are returned separately, with proper axis permutation and image scaling to be consistent with 
+`Flux` embeddings.
+"""
+function read_dataset(decompressed_path::String, dtype::String="train")
+    # Open files
+    data_dir = joinpath(decompressed_path, "warcraft_shortest_path_oneskin", "12x12")
+    data_suffix = "maps"
+    terrain_images = npzread(joinpath(data_dir, dtype * "_" * data_suffix * ".npy"))
+    terrain_weights = npzread(joinpath(data_dir, dtype * "_vertex_weights.npy"))
+    terrain_labels = npzread(joinpath(data_dir, dtype * "_shortest_paths.npy"))
+    # Reshape for Flux
+    terrain_images = permutedims(terrain_images, (2, 3, 4, 1))
+    terrain_labels = permutedims(terrain_labels, (2, 3, 1))
+    terrain_weights = permutedims(terrain_weights, (2, 3, 1))
+    # Normalize images
+    terrain_images = Array{Float32}(terrain_images ./ 255)
+    println("Train images shape: ", size(terrain_images))
+    println("Train labels shape: ", size(terrain_labels))
+    println("Weights shape:", size(terrain_weights))
+    return terrain_images, terrain_labels, terrain_weights
+end
+
+# ╔═╡ 785f3549-d715-469b-8ede-a442fe45bdc2
 md"""
-**Notations**:
-- Instance: $x\in\mathcal{X}$
-- Machine learning predictor: $\varphi_w$
-- Combinatorial Optimization algorithm $f\colon\underset{y \in \mathcal{Y}(x)}{\mathrm{argmax}} ~ \theta^\top y$: 
-- Solution: $y\in\mathcal{Y}(x)$, combinatorial finite set
+Once the files are read, we want to give an adequate format to the dataset, so that we can easily load samples to train and test models. The function `create_dataset` therefore calls the previous `read_dataset` function: 
 """
 
-# ╔═╡ 82689477-2f93-4c65-80cb-29b3117672e4
-md"""
-**Learning problem**:  find w such that policy gives a good solution of some cost function $c$.
+# ╔═╡ 2efec1ab-6aae-42d5-9ffb-f1c6a715eb4e
 """
+	create_dataset(decompressed_path::String, nb_samples::Int=10000)
 
-# ╔═╡ 9590a732-4e44-424b-9d96-72c6bb29a478
-md"**Challenge:** Differentiating through CO algorithms, for integrated training"
-
-# ╔═╡ 97741f5f-1c28-4874-b531-298b9c8f3190
-md"## Two main settings"
-
-# ╔═╡ df9337f3-95c7-4b79-8fc4-22e8c958a22d
-Columns(md"### Risk minimization", md"### Supervised learning")
-
-# ╔═╡ ae852c58-0a0e-47cb-ac4d-a9438b6573a2
-Columns(md"""
-Dataset:
-
-$\mathcal{D} = \{x_1, \dots, x_n\}$
-
-Learning problem:
-
-$\min_w \sum_{i=1}^n c(f(\varphi_w(x_i)))$
-""",
-md"""
-Dataset:
-
-$\mathcal{D} = \{(x_1, \bar{y}_1), \dots, (x_n, \bar{y}_n)\}$
-
-Learning problem:
-
-$\min_w \sum_{i=1}^n \mathcal{L}(\varphi_w(x_i), \bar{y}_i)$
+Create the dataset corresponding to the data located at `decompressed_path`, possibly sub-sampling `nb_samples` points.
+The dataset is made of images of Warcraft terrains, cell cost labels and shortest path labels.
+It is a `Vector` of tuples, each `Tuple` being a dataset point.
 """
-)
-
-# ╔═╡ 34b6edfb-ee8d-4910-a4f8-21cc75d32e83
-md"## What to implement?"
-
-# ╔═╡ 56b2e7c3-9a79-4930-9282-a9869ac55d1f
-Columns(
-md"### Building the policy",
-md"### Training the policy"
-)
-
-# ╔═╡ 24260185-b532-490e-9ca9-4da2eb906385
-Columns(
-md"""
-- statistical model $\varphi_w$
-- CO algorithm $f$
-""",
-md"""
-- dataset
-- differentiable loss function
-""",
-)
-
-# ╔═╡ cc1cddbe-b228-41b1-93bc-086a7e1a98c4
-md"# III - Two-dimensional toy example"
-
-# ╔═╡ d8222966-0378-4440-8ddc-6561ec2d43b9
-md"## Problem statement"
-
-# ╔═╡ df8b5b8e-5cad-4a2a-b448-4f97269f658c
-md"""
-- Instances are encoded by a feature vector $x\in\mathbb{R}^5$
-- Feasible sets ``\mathcal{Y}(x)`` is small, finite: vertices of a two-dimensional polygon
-"""
-
-# ╔═╡ 38da533e-2293-4fb1-837a-7d017a263d95
-md"We use the `Argmax2DBenchmark` from `DecisionFocusedLearningBenchmarks.jl`:"
-
-# ╔═╡ e4f3343c-0416-4483-8413-a87187a91c85
-b = Argmax2DBenchmark(; polytope_vertex_range=6:8)
-
-# ╔═╡ b0f67836-5710-4412-b8aa-fe67560f4888
-md"## Dataset creation"
-
-# ╔═╡ 9bae5c5a-b565-4824-b017-85d9c57aaf4e
-md"The `generate_dataset` method allows us creating a dataset without too much efforts:"
-
-# ╔═╡ 7bac6322-c094-45ab-8a28-badd7f870bb6
-dataset = generate_dataset(b, 100; seed=0)
-
-# ╔═╡ 36be976e-bc2c-46f8-b071-1b38e252488f
-md"Split the dataset into train/test:"
-
-# ╔═╡ 1c6f8529-7d83-4d18-9e2f-51d78df69306
-train_dataset, test_dataset = dataset[1:50], dataset[51:100]
-
-# ╔═╡ 99f720d8-e341-43b9-b3a6-10a96ebd68cf
-md"## Data visualization"
-
-# ╔═╡ 6aef9bce-6e15-4fed-bfd0-9b2dc42050b7
-md"We can use the `index_slider` to sweep through the dataset with the `index` variable:"
-
-# ╔═╡ c7f54145-90ca-4a7c-8c47-f811558ee4c9
-md"# IV - Building the policy"
-
-# ╔═╡ ee0a909f-2112-458f-a27b-c81570c47ded
-md"## Statistical model $\varphi_w$"
-
-# ╔═╡ b27eed1d-4c1c-46f9-82cd-a365359e5a89
-md"In this tutorial, we choose to use the [`Flux.jl`](https://fluxml.ai/Flux.jl/stable/) Julia machine learning library for neural networks:"
-
-# ╔═╡ 7d703911-3b1f-490e-af2b-10d7195ee323
-md"Initializing an `initial_model` with random weights"
-
-# ╔═╡ 5ce29e1a-0b5a-4294-89c7-a5ee87f74691
-initial_model = Dense(5 => 2; bias=false)
-
-# ╔═╡ 56ed0c63-8f54-4ec7-8c04-3434996e581e
-initial_model.weight
-
-# ╔═╡ 4174ef91-40cd-4201-9158-39caf684ff3e
-b.encoder.weight
-
-# ╔═╡ 8aea5bc7-dbe9-437d-b8c1-e3dcc904462d
-md"The `Flux.gradient` syntax helps us directly compute gradients:"
-
-# ╔═╡ 60816579-faa9-486c-aae6-864963350571
-md"## CO algorithm"
-
-# ╔═╡ 03bf13d9-a590-4a9b-838f-0af592f7d5ab
-md"""
-$f\colon\theta\mapsto\arg\max_{y\in\mathcal{Y}(x)} \theta^\top y$
-"""
-
-# ╔═╡ eb26a589-12a0-4779-b0a1-ac2440b971fe
-tip(md"""
-- ``f`` can be any Julia function
-- ``f`` is assumed to be a maximizer (solves a maximization problem)
-- it takes ``\theta`` as its only argument
-- can take any number of extra keyword arguments
-- outputs the argmax
-""")
-
-# ╔═╡ 762dfdf8-e56b-470d-b055-1471704622aa
-md"### Basic Julia function"
-
-# ╔═╡ 0c57c55b-0fb8-43e7-b81e-0ae75e174055
-function f(θ; instance, kwargs...)
-	return instance[argmax(dot(θ, v) for v in instance)]
-end
-
-# ╔═╡ 963cea78-27e6-4f3a-96b5-88e6fc7e070c
-md"### MILP"
-
-# ╔═╡ e2a68ad5-1676-47b6-8dbc-78dfcdcf0f58
-md"Alternatively, we can use a MILP solver (do not do this in practice for this problem):"
-
-# ╔═╡ 28f6aa13-9d7a-4e13-a2fc-c1913ba7a801
-md"""
-```math
-\begin{aligned}
-\max_y\quad & \sum_{i=1}^N (\theta^\top y_i) \delta_i \\
-\text{s.t.}\quad & \sum \delta_i = 1 \\
-& \delta_i\in \{0, 1\}
-\end{aligned}
-```
-"""
-
-# ╔═╡ bbcd2b11-b92b-4a2f-b3bd-9cac8a18be65
-function f_milp(θ; instance, kwargs...)
-	N = length(instance)
-	model = Model(HiGHS.Optimizer)
-	set_silent(model)
-	@variable(model, δ[1:N], Bin)
-	@constraint(model, sum(δ) == 1)
-	@objective(model, Max, sum(dot(θ, instance[i]) * δ[i] for i in 1:N))
-	optimize!(model)
-	return instance[argmax(value.(δ))]
-end
-
-# ╔═╡ 8a1b9780-de0f-452f-914f-263facf9cedc
-md"## Maximizer visualization"
-
-# ╔═╡ 8378e2c1-6240-4bd0-bab5-1dce36d5f50b
-md"
-Here we visualize the value of ``f(\theta)``.
-You can modify θ by using the slider below to modify its angle:
-"
-
-# ╔═╡ d8e628f9-b22c-4316-8aea-3a8049881d98
-md"## Differentiating through the policy"
-
-# ╔═╡ 9ba1aac1-a60c-41d2-8125-45a95d0d3010
-md"In this tutorial, we use the [`Zygote.jl`](https://fluxml.ai/Zygote.jl/stable/) automatic differentiation framework."
-
-# ╔═╡ 47463503-90ed-4626-bb4d-2f593083e077
-md"Jacobian either fails (uncomment to see the error):"
-
-# ╔═╡ f70e4d33-fa7d-4d93-92d5-1ee6517a0298
-#Zygote.jacobian(θ -> f_milp(θ; instance), θ)
-
-# ╔═╡ 0ebb7e0a-8b02-4824-aaed-694382ff08ae
-md"or is always zero:"
-
-# ╔═╡ 7301381f-8397-4ce1-9668-0cd0239b1de4
-question_box(md"1. Why is the jacobian zero for all values of ``\theta``?")
-
-# ╔═╡ bf8ab4e5-8573-43d3-91fa-61a3c7613497
-md"""### Black-box cost function to minimize"""
-
-# ╔═╡ 90ab00df-727d-45c1-b8c4-52dbfe124c93
-md"Let us assume we have access to a black-box cost function that is aware of the true costs:"
-
-# ╔═╡ 714904d9-78c7-4c25-a696-00952c295c26
-cost(y; θ_true, kwargs...) = -dot(θ_true, y)
-
-# ╔═╡ 3ebbce52-c866-41e5-addb-6e4484dc4c8f
-md"## Cost visualization"
-
-# ╔═╡ c31eedb6-cce8-4a35-ba7b-3c8eec88799b
-md"Contour plot the cost depending on θ:"
-
-# ╔═╡ fadfc810-f3ca-47b6-963e-d752177edc6f
-md"# V - Risk minimization"
-
-# ╔═╡ 6317732d-4b74-4ec3-969e-282f9cde2c52
-md"""
-## Smoothing by regularization
-
-```math
-\xrightarrow[\text{instance $x$}]{\text{Problem}}
-\fbox{NN $\varphi_w$}
-\xrightarrow[\text{direction $\theta$}]{\text{Objective}}
-\fbox{MILP $\underset{y \in \mathcal{Y}}{\mathrm{argmax}} ~ \theta^\top y$}
-\xrightarrow[\text{solution $\widehat{y}$}]{\text{Candidate}}
-```
-
-The combinatorial layer function
-
-```math
-f\colon \theta\longmapsto \underset{y \in \mathcal{Y}}{\mathrm{argmax}} ~ \theta^\top y
-```
-is piecewise constant $\implies$ no gradient information.
-
-The perturbed regularized optimizer is defined by:
-
-```math
-\hat{f}_\varepsilon(\theta) = \mathbb{E}_{Z}\big[ \underset{y \in \mathcal{Y}}{\mathrm{argmax}} (\theta + \varepsilon Z)^\top y \big]
-```
-with ``Z\sim\mathcal{N}(0, 1)``, ``\varepsilon>0``.
-
-``\implies`` becomes differentiable.
-
-Can be seen as an expectation over the vertices of $\mathrm{conv}(\mathcal{Y})$.
-
-```math
-
-\hat{f}_\varepsilon(\theta) = \mathbb{E}_{\hat{p}(\cdot|\theta)}[Y] = \sum_{y\in\mathcal{Y}}~y~\hat{p}(y|\theta)
-```
-"""
-
-# ╔═╡ af3006c1-407e-472c-8af0-27178ff58457
-md"## `PerturbedAdditive`"
-
-# ╔═╡ fc06e9c1-d50e-4e0b-be00-add2ad033359
-md"""`InferOpt.jl` provides the `PerturbedAdditive` wrapper to regularize any given combinatorial optimization oracle $f$, and transform it into $\hat f$.
-
-It takes the maximizer as the main arguments, as well as:
-- `ε`: size of the perturbation
-- `nb_samples`: number of Monte Carlo samples to draw for estimating expectations
-
-There are some other optional arguments:
-- `variance_reduction` (default=true): if you want to use variance reduction in grdident computation
-- `seed` (default=nothing), and `rng`: if you want to always generate the same perturbations, mainly for reproducibility purposes
-"""
-
-# ╔═╡ f4da304a-7110-4e04-92a0-61a053e67605
-question_box(md"2. What can you say about the derivatives of the perturbed maximizer?")
-
-# ╔═╡ 417bf6c1-5627-4d73-bd6a-c7b9ef77c70b
-md"## Pushforward"
-
-# ╔═╡ db276073-88c0-492a-984f-c22d9594c3d1
-md"""We can combine the perturbed maximizer with the black-box cost function through a `Pushforward`
-
-$\mathbb{E}_Z[c(f(\theta + \varepsilon Z))]$
-"""
-
-# ╔═╡ 00dfd4d4-7776-45b2-b1cc-97454f8738e4
-md"Contour plot of the differentiable loss:"
-
-# ╔═╡ 2d90b286-584a-486e-b425-e4d44424c6b2
-md"## Visualizing gradients"
-
-# ╔═╡ 0e022469-7d68-4a54-a577-e7b7d3ae4cb9
-question_box(md"3. What's the impact of the `variance_reduction` parameter on the gradients? What's the impact of ``\varepsilon`` and of the number of samples?")
-
-# ╔═╡ 09fe9f66-4495-4936-9fff-683da0a50718
-md"## Training loop"
-
-# ╔═╡ 2fa9d9fb-b4ec-41c4-bedc-23bec20bd069
-md"Here is a simple training loop for risk minimization, using the Flux package:"
-
-# ╔═╡ 024002f9-8e52-4cad-aef2-9dd027515927
-md"[https://fluxml.ai/Flux.jl/stable/guide/training/training/](https://fluxml.ai/Flux.jl/stable/guide/training/training/)"
-
-# ╔═╡ 6954540a-a432-4aeb-9999-f2eccafe7583
-md"Adjust the number of traiuning epochs as needed:"
-
-# ╔═╡ 62de8049-97fe-4212-983b-f6d0471a20db
-nb_epochs = 100
-
-# ╔═╡ 8b6f5e2e-e1a6-4351-ae05-47bfcefa9835
-md"## Plotting loss and gap history"
-
-# ╔═╡ 49a6c2b6-fa05-48d0-b4d3-1bc178bd7ff3
-md"# VI - Fenchel-Young loss: use it"
-
-# ╔═╡ 6150ca0a-2aa6-4ee4-9665-b7a8b9f79e7b
-md"## Fenchel-Young loss"
-
-# ╔═╡ 14907262-c41e-4e77-86fb-414a036b14a4
-md"""
-## Fenchel-Young loss (learning by imitation)
-By defining:
-
-```math
-F^+_\varepsilon (\theta) := \mathbb{E}_{Z}\big[ \operatorname{max}_{y \in \mathcal{Y}(x)} (\theta + \varepsilon Z)^\top y \big],
-```
-and ``\Omega_\varepsilon^+`` its Fenchel conjugate, we can define the Fenchel-Young loss as follows:
-```math
-\mathcal{L}_{\varepsilon}^{\text{FY}}(\theta, \bar{y}) = F^+_\varepsilon (\theta) + \Omega_\varepsilon(\bar{y}) - \theta^\top \bar{y}
-```
-
-Given a target solution $\bar{y}$ and a parameter $\theta$, a subgradient is given by:
-```math
-\widehat{f}(\theta) - \bar{y} \in \partial_\theta \mathcal{L}_{\varepsilon}^{\text{FY}}(\theta, \bar{y}).
-```
-The optimization block has meaningful gradients $\implies$ we can backpropagate through the whole pipeline, using automatic differentiation.
-"""
-
-# ╔═╡ 732654c7-c13c-4ed9-9123-23531b5fc600
-question_box(md"4. What are the properties of ``\mathcal{L}_{\varepsilon}^{\text{FY}}?``")
-
-# ╔═╡ 29941802-5c0b-4e95-ae49-928ec5b7073a
-md"Contour plot:"
-
-# ╔═╡ 5e59ffd1-aa9e-49ff-b1a7-df16f35bb7f1
-md"With gradient quivers:"
-
-# ╔═╡ 0f91aeae-59dd-4f3d-885a-d6cb71590b56
-question_box(md"5. What happens to the loss when $\varepsilon = 0$? What happens when $\varepsilon$ increases?")
-
-# ╔═╡ 58ad764b-a6fa-4675-a621-d9b1abac96a5
-md"## Training loop"
-
-# ╔═╡ 98b80831-9b7b-41de-a224-1973e0395842
-md"Again, a simple training loop using Flux, minimizing the Fenchel-Young loss over our dataset:"
-
-# ╔═╡ bed2578d-5b30-46d9-978e-953050c93df3
-md"## Plotting loss and gap history"
-
-# ╔═╡ 6638f88d-5af0-49d6-a6f9-8b74fbb2df04
-question_box(md"6. Compare risk minimization and supervised learning experiments, in terms of runtime, convergence, and performance, and the impact of ``varepsilon`` and the number of samples on both experiments.")
-
-# ╔═╡ bb98d7da-786c-4e64-acff-afb243dac706
-md"# Appendix"
-
-# ╔═╡ 9582839c-afe7-4c00-9baa-26a00da644f1
-ChooseDisplayMode()
-
-# ╔═╡ caf7551a-31b3-4656-bb34-b7cbd0d81159
-TableOfContents(depth=2)
-
-# ╔═╡ 54430531-5f61-4151-8a9f-bc879d5fa025
-md"#### Notebook parameters"
-
-# ╔═╡ 5e571df1-75b6-42ff-b97b-7196d41b8536
-color = :inferno;
-
-# ╔═╡ acfd9016-dd5a-4e06-b7b6-1964faa636be
-angle_slider = md"""
-angle = $(@bind angle Slider(0:0.01:6.28; default=3.14, show_value=true))
-"""
-
-# ╔═╡ db6d130a-8e18-4777-bb1d-49b6f1ee6702
-θ = [cos(angle), sin(angle)] ./ 2
-
-# ╔═╡ db0a354c-8a0d-41b8-bc20-c9bdfb9bd76e
-angle_slider
-
-# ╔═╡ 0a91b806-abee-4038-ae67-5119a3f5c6af
-nb_samples_slider = md"""
-samples = $(@bind nb_samples Slider(1:200; default=10, show_value=true))
-"""
-
-# ╔═╡ bdb3b2f6-9c87-4276-8e47-d1b48d0046ad
-nb_samples_slider
-
-# ╔═╡ 2862f826-c740-44a9-a5eb-d41d9e113603
-nb_samples_slider
-
-# ╔═╡ 74c0397a-9bd8-4880-957e-433427e3f9ca
-nb_samples_slider
-
-# ╔═╡ 1938dfd1-5dee-48e1-aed3-a07a5bfdb6ed
-nb_samples_slider
-
-# ╔═╡ 40f13bb3-2ff0-48a3-a689-4578ab957609
-ε_slider = md"""
-ε = $(@bind ε Slider(0.0:0.02:1.0; default=0.0, show_value=true))
-"""
-
-# ╔═╡ 0f05119d-4c8a-4625-9990-c9dab30c6868
-Columns(nb_samples_slider, ε_slider)
-
-# ╔═╡ 8e9c3b5d-f8d2-48c6-a259-966400d21faf
-perturbed = PerturbedAdditive(
-	f; nb_samples=nb_samples, ε=ε, threaded=true, variance_reduction=false
-)
-
-# ╔═╡ 2a4512ce-ed89-4abe-b1bb-f6b996e6f655
-loss = Pushforward(perturbed, cost)
-
-# ╔═╡ 3e02af72-c902-4784-8cd6-0514e35603df
-begin
-model = deepcopy(initial_model)
-opt_state = Flux.setup(Adam(), model)
-loss_history = Float64[]
-gap_history = Float64[]
-@progress "Training progress:" for epoch in 1:nb_epochs
-	total_loss = 0.0
-	for sample in train_dataset
-		val, grads = Flux.withgradient(model) do m
-		  θ = m(sample.x)
-		  loss(θ; θ_true=sample.θ, instance=sample.info)
-		end
-		Flux.update!(opt_state, model, grads[1])
-		total_loss += val
-	end
-	push!(loss_history, total_loss)
-	push!(gap_history, compute_gap(b, dataset, model, f))
-end
-end
-
-# ╔═╡ 05664cb3-60a9-4630-8594-6c5d28c540be
-plot(loss_history)
-
-# ╔═╡ 7157d9d2-ecb6-4a34-80b5-6396d6a84fc9
-plot(gap_history)
-
-# ╔═╡ 0b7e710c-70f3-46fd-9bb5-fff89a6fe0f5
-fyl = FenchelYoungLoss(perturbed)
-
-# ╔═╡ d0c2e03f-8d4f-453b-b2cd-72df2c5d4a53
-begin
-fyl_model = deepcopy(initial_model)
-fyl_opt_state = Flux.setup(Adam(), fyl_model)
-fyl_loss_history = Float64[]
-fyl_gap_history = Float64[]
-@progress "Training progress:" for epoch in 1:nb_epochs
-	total_loss = 0.0
-	for sample in train_dataset
-		val, grads = Flux.withgradient(fyl_model) do m
-		  θ = m(sample.x)
-		  fyl(θ, sample.y; instance=sample.info)
-		end
-		Flux.update!(fyl_opt_state, fyl_model, grads[1])
-		total_loss += val
-	end
-	push!(fyl_loss_history, total_loss)
-	push!(fyl_gap_history, compute_gap(b, dataset, fyl_model, f))
-end
-end
-
-# ╔═╡ b2af8062-f2cf-4a92-9f11-4d9d815d0bdb
-plot(fyl_loss_history)
-
-# ╔═╡ 73c2127d-10b8-4bb8-9dae-6783a22cd820
-let
-	plot(gap_history; label="risk minimization")
-	plot!(fyl_gap_history; label="fyl")
-end
-
-# ╔═╡ f069b67a-2ede-4b41-b823-9609eb4fd245
-fyl_model.weight
-
-# ╔═╡ ce2ca9fc-1618-4e07-a72f-0943718130d3
-perturbed
-
-# ╔═╡ fc26b41b-5bb7-456b-a430-c0c922450144
-perturbed_variance_reduction = PerturbedAdditive(
-	f; nb_samples=nb_samples, ε=ε, threaded=true, variance_reduction=true
-)
-
-# ╔═╡ c4ebfdef-a04e-436f-94ef-45738bd72162
-loss_variance_reduction = Pushforward(perturbed_variance_reduction, cost)
-
-# ╔═╡ 0369abd7-0b6b-444b-a06a-9a7552ab2c18
-Columns(angle_slider, ε_slider)
-
-# ╔═╡ c9362acf-62ac-456e-8c5c-915cad6c2563
-ε_slider
-
-# ╔═╡ 5679caf1-3146-493e-90fc-1d3b9f09d0f1
-ε_slider
-
-# ╔═╡ 194ed746-cce9-4d76-bf9a-0525296611bb
-ε_slider
-
-# ╔═╡ 382ff047-bd1c-4c4d-9119-0835de9be0bd
-probadist_checkbox = md"""
-Plot probability distribution? $(@bind plot_probadist_perturbed CheckBox())
-"""
-
-# ╔═╡ 1327ac64-273a-469d-a22c-dedb5cd91fd5
-Columns(nb_samples_slider, probadist_checkbox)
-
-# ╔═╡ 5a9813cf-c8f9-410b-9ae9-726dc735a782
-index_slider = md"index = $(@bind index NumberField(1:length(dataset)))"
-
-# ╔═╡ e1fb07c9-2189-4c43-a7d3-7dc747ffd580
-index_slider
-
-# ╔═╡ 18d09173-ec3e-4040-b3df-fc5703772c56
-sample = dataset[index]
-
-# ╔═╡ 50a06ced-bb19-4dac-8676-09af4aa2a474
-begin
-	x = sample.x
-	instance = sample.info
-	θ_true = sample.θ
-	y_true = sample.y
-end
-
-# ╔═╡ db9a5a30-a633-457e-b582-1117a64634db
-grads = Flux.gradient(initial_model) do m
-	m(x)[1]
-end
-
-# ╔═╡ e7464dcb-7528-459b-844e-e2e2588b868b
-f(θ_true; instance)
-
-# ╔═╡ 4dd77df7-392f-4a36-9e5f-8c16244accc6
-y_true
-
-# ╔═╡ dea0ccaf-9094-4116-a251-00caef8697d1
-f_milp(θ_true; instance)
-
-# ╔═╡ 50656ff3-6853-48a8-93db-89dae0c4420e
-y_true
-
-# ╔═╡ 47464acc-f0f4-4d94-9476-340119eab545
-Zygote.jacobian(θ -> f(θ; instance), θ)[1]
-
-# ╔═╡ cf16c70a-1ec7-4ba3-9585-d101bd2d5864
-y = f(initial_model(x); instance)
-
-# ╔═╡ 1cc350cd-efc5-4e3b-bac2-3d7626d71c40
-cost(y; θ_true)
-
-# ╔═╡ 301a0004-01ee-47be-878d-fe6c0b2a3747
-cost(y_true; θ_true)
-
-# ╔═╡ 9d3f1108-7c24-47a7-9c9f-de0808cbad69
-perturbed(θ; instance)
-
-# ╔═╡ 3bd0e77b-b425-46d0-90f3-f0b32228b599
-Zygote.jacobian(θ -> perturbed(θ; instance), θ)
-
-# ╔═╡ 494e706c-0031-4546-bd49-26896aa3e31b
-let
-	fig = plot(x -> cost(f([x, θ[2]]; instance); θ_true); label="cost")
-	plot!(fig, x -> Pushforward(perturbed, cost)([x, θ[2]]; θ_true, instance); label="loss")
-end
-
-# ╔═╡ 29d01466-1f7b-4d83-bedb-37ffde979f93
-fyl([0, 0], y_true; instance)
-
-# ╔═╡ 0946a4fe-a144-4d74-9a67-0d49e46103a7
-_, g = Flux.withgradient(fyl_model) do m
-	fyl(m(x), y_true; instance)
-end
-
-# ╔═╡ 25f5ea75-035d-442d-9154-50ee92365ed4
-g[1].weight
-
-# ╔═╡ d96bc96c-0187-45fd-a8eb-781fa2ae7b82
-fig = plot_data(b, sample)
-
-# ╔═╡ 13edb9da-8515-4a34-abd8-f8e2a4958c5f
-plot_data(b, sample; θ)
-
-# ╔═╡ fe5e035c-9005-44b5-b4d5-3509716f6079
-Columns(angle_slider, index_slider)
-
-# ╔═╡ a456ce1e-4f4f-4ae1-aa72-1136b5422804
-x_slider = @bind x_max NumberField(1:0.1:10, default=1)
-
-# ╔═╡ a5d0f77e-5cff-4268-ba52-bd5b39268e82
-y_slider = @bind y_max NumberField(1:0.1:10, default=1)
-
-# ╔═╡ 07b1fb27-25cf-4a1a-9db4-a89727972986
-grid_size_slider = @bind grid_size NumberField(50:500, default=200)
-
-# ╔═╡ 4b0ba4d9-9f70-4e6f-a9a2-1136851f0e19
-Columns(x_slider, y_slider, grid_size_slider)
-
-# ╔═╡ 9870446b-33b8-4ca0-9538-90a853ee1cfa
-X, Y = range(-x_max, x_max, length=grid_size), range(-y_max, y_max, length=grid_size);
-
-# ╔═╡ c2952f16-f403-4296-8d0e-e84b110e40df
-let
-	g(x, y) = loss([x, y]; θ_true, instance)
-	Z = @. g(X', Y)
-	contour(X, Y, Z; color, fill=true, xlabel="θ₁", ylabel="θ₂")
-end
-
-# ╔═╡ 338fc455-4f3a-4161-bcae-ef8f31d59350
-begin
-	hh(x, y) = fyl([x, y], y_true; instance)
-	contour(X, Y, @. hh(X', Y); color, fill=true, xlabel="θ₁", ylabel="θ₂")
-end
-
-# ╔═╡ 5165515a-1375-4c80-854d-f4c424a63840
-md"#### Utilities"
-
-# ╔═╡ 5755f0aa-e093-4e29-8cfa-f011f23e47ba
-meshgrid(x, y) = reim(complex.(x', y))
-
-# ╔═╡ e91d99f8-c633-4ed1-917c-ad88e96532f0
-X_grid, Y_grid = meshgrid(X, Y)
-
-# ╔═╡ 2f95ebe4-42c9-4e3e-896a-aedd841327ca
-let
-	g(x, y) = cost(f([x, y]; instance); θ_true)
-	Z = @. g(X_grid, Y_grid);
-	contour(X, Y, Z; color, fill=true, xlabel="θ₁", ylabel="θ₂")
-end
-
-# ╔═╡ 2b642e06-52a3-4554-b82d-654e1f25547f
-XX, YY = meshgrid(range(-x_max, x_max, length=10), range(-y_max, y_max, length=10))
-
-# ╔═╡ e59a9fdb-b80b-4017-9e46-363f15e19fc6
-let
-	loss = Pushforward(PerturbedAdditive(f; nb_samples=200, ε=0.1, variance_reduction=false), cost)
-	g(x, y) = loss([x, y]; θ_true, instance)
-	Z = @. g(X', Y)
-	contour(X, Y, Z; fill=true, xlabel="θ₁", ylabel="θ₂", color)
-	ff(x, y) = -Zygote.gradient(θ -> loss(θ; θ_true, instance), [x, y])[1]
-	ZZ = @. ff(XX, YY) ./ 5
-	uu = map(x -> x[1], ZZ)
-	vv = map(x -> x[2], ZZ)
-	quiver!(XX, YY; quiver=(uu, vv))
-end
-
-# ╔═╡ bef4aea1-dae4-4a32-8913-cfefbe9c6919
-let
-	loss = Pushforward(PerturbedAdditive(f; nb_samples=200, ε=0.1, variance_reduction=true), cost)
-	g(x, y) = loss([x, y]; θ_true, instance)
-	Z = @. g(X', Y)
-	contour(X, Y, Z; fill=true, xlabel="θ₁", ylabel="θ₂", color)
-	ff(x, y) = -Zygote.gradient(θ -> loss(θ; θ_true, instance), [x, y])[1]
-	ZZ = @. ff(XX, YY) ./ 5
-	uu = map(x -> x[1], ZZ)
-	vv = map(x -> x[2], ZZ)
-	quiver!(XX, YY; quiver=(uu, vv))
-end
-
-# ╔═╡ 9baf4f5a-dabb-466d-bb62-186f6c531ff8
-let
-	hhh(x, y) = -Zygote.gradient(θ -> fyl(θ, y_true; instance), [x, y])[1] ./ 10 
-	ZZ = @. hhh(XX, YY)
-	u = map(x -> x[1], ZZ)
-	v = map(x -> x[2], ZZ)
-	fig2 = contour(X, Y, @. hh(X', Y); fill=true, xlabel="θ₁", ylabel="θ₂", color)
-	quiver!(fig2, XX, YY; quiver=(u, v))
-end
-
-# ╔═╡ ec0223ac-c7e9-43d4-8142-31117ac8a947
-begin
-function get_angle(v)
-    @assert !(norm(v) ≈ 0)
-    v = v ./ norm(v)
-    if v[2] >= 0
-        return acos(v[1])
-    else
-        return π + acos(-v[1])
-    end
-end;
-function plot_distribution!(pl, probadist)
-    A = probadist.atoms
-    As = sort(A; by=get_angle)
-    p = probadist.weights
-    Plots.plot!(
-        pl,
-        vcat(map(first, As), first(As[1])),
-        vcat(map(last, As), last(As[1]));
-        fillrange=0,
-        fillcolor=:blue,
-        fillalpha=0.1,
-        linestyle=:dash,
-        linecolor=Colors.JULIA_LOGO_COLORS.blue,
-        label=L"\mathrm{conv}(\hat{p}(\theta))",
+function create_dataset(decompressed_path::String, nb_samples::Int=10000)
+    terrain_images, terrain_labels, terrain_weights = read_dataset(
+        decompressed_path, "train"
     )
-    return Plots.scatter!(
-        pl,
-        map(first, A),
-        map(last, A);
-        markersize=25 .* p .^ 0.5,
-        markercolor=Colors.JULIA_LOGO_COLORS.blue,
-        markerstrokewidth=0,
-        markeralpha=0.4,
-        label=L"\hat{p}(\theta)",
-    )
+    X = [
+        reshape(terrain_images[:, :, :, i], (size(terrain_images[:, :, :, i])..., 1)) for
+        i in 1:nb_samples
+    ]
+    Y = [BitMatrix(terrain_labels[:, :, i]) for i in 1:nb_samples]
+    WG = [terrain_weights[:, :, i] for i in 1:nb_samples]
+    return collect(zip(X, Y, WG))
+end
+
+# ╔═╡ 741beead-49be-4e02-9c2c-f73dcacf1155
+md"""
+Last, as usual in machine learning implementations, we split a dataset into train and test sets. The function `train_test_split` does the job:
+
+"""
+
+# ╔═╡ 3af34e34-0a53-43ae-a1c2-4d30aa352c93
+"""
+	train_test_split(X::AbstractVector, train_percentage::Real=0.5)
+
+Split a dataset contained in `X` into train and test datasets.
+The proportion of the initial dataset kept in the train set is `train_percentage`.
+"""
+function train_test_split(X::AbstractVector, train_percentage::Real=0.5)
+    N = length(X)
+    N_train = floor(Int, N * train_percentage)
+    N_test = N - N_train
+    train_ind, test_ind = 1:N_train, (N_train+1):(N_train+N_test)
+    X_train, X_test = X[train_ind], X[test_ind]
+    return X_train, X_test
+end
+
+# ╔═╡ 843e7019-a761-4b7c-b5b9-d4e0423147e2
+md"""
+### c) Plot functions
+"""
+
+# ╔═╡ d9afef10-f50d-4c61-8ebc-332e1ca5d77e
+md"""
+In the following cell, we define utility plot functions to have a glimpse at images, cell costs and paths. Their implementation is not at the core of this tutorial, they are thus hidden.
+"""
+
+# ╔═╡ 758ae807-7324-4b9a-820f-fcafae83a3a8
+md"""
+### d) Import and explore the dataset
+"""
+
+# ╔═╡ 1cd5c53e-cd29-4fc1-aaad-bec834762231
+md"""
+Once we have both defined the functions to read and create a dataset, and to visualize it, we want to have a look at images and paths. Before that, we set the size of the dataset, as well as the train proportion: 
+"""
+
+# ╔═╡ 9cca518e-50d2-49cb-9cf0-b22a29236e5e
+nb_samples, train_prop = 100, 0.8;
+
+# ╔═╡ 01ce2a8b-0bc7-495b-bf31-3f4cdf465dc6
+info(md"We focus only on $nb_samples dataset points, and use a $(trunc(Int, train_prop*100))% / $(trunc(Int, 100 - train_prop*100))% train/test split.")
+
+# ╔═╡ 293ee492-a924-47ac-8c32-42e9555b50dd
+begin
+    dataset = create_dataset(decompressed_path, nb_samples)
+    train_dataset, test_dataset = splitobs(dataset; at=train_prop)
 end;
-function plot_expectation!(pl, probadist)
-	ŷΩ = mean(probadist)
-	return scatter!(
-		pl,
-		[ŷΩ[1]],
-		[ŷΩ[2]];
-		color=Colors.JULIA_LOGO_COLORS.blue,
-		markersize=6,
-		markershape=:hexagon,
-		label=L"\hat{f}(\theta)",
-	)
-end;
-function compress_distribution!(
-    probadist::DifferentiableExpectations.FixedAtomsProbabilityDistribution; atol=0
-)
-    (; atoms, weights) = probadist
-    to_delete = Int[]
-    for i in length(probadist):-1:1
-        ai = atoms[i]
-        for j in 1:(i - 1)
-            aj = atoms[j]
-            if isapprox(ai, aj; atol=atol)
-                weights[j] += weights[i]
-                push!(to_delete, i)
-                break
+
+# ╔═╡ b6794e99-5d0e-4a58-8fad-699cf537475e
+md"""
+We can have a glimpse at the dataset, use the slider to visualize each tuple (image, weights, label path).
+"""
+
+# ╔═╡ 2ba43383-74e1-4e38-884a-d13d74bccfca
+index_slider = md"""
+``n =`` $(@bind n Slider(1:length(dataset); default=1, show_value=true))
+"""
+
+# ╔═╡ 0ec8d253-f842-4a8d-ae18-ba3f43085aa6
+md"""
+## II - Combinatorial functions
+"""
+
+# ╔═╡ 39f32cf0-4cea-4ecd-bb6e-fe96cdcbbab9
+md"""
+We focus on additional optimization functions to define the combinatorial layer of our pipelines.
+"""
+
+# ╔═╡ 42dff3ce-8f06-4a3d-87bd-cb4036f03962
+md"""
+### a) Recap on the shortest path problem
+"""
+
+# ╔═╡ 3d0c8161-3c98-4bff-9462-db74c81d7a4c
+md"""
+Let $D = (V, A)$ be a digraph, $(c_a)_{a \in A}$ the cost associated to the arcs of the digraph, and $(o, d) \in V^2$ the origin and destination nodes. The problem we consider is the following:
+
+**Shortest path problem:** Find an elementary path $P$ from node $o$ to node $d$ in the digraph $D$ with minimum cost $c(P) = \sum_{a \in P} c_a$.
+"""
+
+# ╔═╡ 36354a96-326d-462e-b7cf-7f5412bda188
+question_box(md"7. When the cost function is non-negative, which algorithm can we use ?")
+
+# ╔═╡ 3d050270-17e6-4ce1-afc1-c46a9d639cf9
+md"Dijkstra or A*"
+
+# ╔═╡ 33538a99-917a-4df8-b021-d6cef55e3166
+question_box(md"8. In the case the graph contains no absorbing cycle, which algorithm can we use ?")
+
+# ╔═╡ da2fb70b-ea02-4192-8f7a-94c0b27e1f76
+md"Bellman Ford"
+
+# ╔═╡ b69c50bc-e84f-4314-bbd8-35b7e87bb601
+md"""
+In the following, we will perturb or regularize the output of a neural network to define the candidate cell costs to predict shortest paths. We therefore need to deal with possibly negative costs.
+"""
+
+# ╔═╡ 922e1262-699a-41b4-8a80-9579cb6e68e4
+md"""
+###  b) From shortest path to generic maximizer
+"""
+
+# ╔═╡ 9590b21c-af44-4fc1-891d-081f99af93e5
+md"""
+Now that we have defined and implemented an algorithm to deal with the shortest path problem, we wrap it in a maximizer function to match the generic framework of structured prediction.
+
+The maximizer needs to take predicted weights `θ` as their only input, and can take some keyword arguments if needed (some instance information for example).
+"""
+
+# ╔═╡ 80092823-00b1-4095-8f05-042c50a1e0c9
+function dijkstra_maximizer(θ::AbstractMatrix; kwargs...)
+    g = GridGraph(-θ; directions=QUEEN_DIRECTIONS)
+    path = grid_dijkstra(g, 1, nv(g))
+    y = path_to_matrix(g, path)
+    return y
+end
+
+# ╔═╡ 549205eb-c5fd-4de9-82f3-f032005afcd3
+"""
+    grid_bellman_ford_warcraft(g, s, d, length_max)
+
+Apply the Bellman-Ford algorithm on an `GridGraph` `g`, and return a `ShortestPathTree` with source `s` and destination `d`,
+among the paths having length smaller than `length_max`.
+"""
+function grid_bellman_ford_warcraft(g::GridGraph{T,R,W,A}, s::Integer, d::Integer, length_max::Int=nv(g)) where {T,R,W,A}
+    # Init storage
+    parents = zeros(Int, nv(g), length_max + 1)
+    dists = fill(Inf, nv(g), length_max + 1)
+    # Add source
+    dists[s, 1] = zero(T)
+    # Main loop
+    for k in 1:length_max
+        for v in vertices(g)
+            for u in inneighbors(g, v)
+                d_u = dists[u, k]
+                if !isinf(d_u)
+                    d_v = dists[v, k+1]
+                    d_v_through_u = d_u + GridGraphs.vertex_weight(g, v)
+                    if isinf(d_v) || (d_v_through_u < d_v)
+                        dists[v, k+1] = d_v_through_u
+                        parents[v, k+1] = u
+                    end
+                end
             end
         end
     end
-    sort!(to_delete)
-    deleteat!(atoms, to_delete)
-    deleteat!(weights, to_delete)
-    return probadist
-end;
-function plot_perturbed(perturbed_layer)
-	θ = 0.5 .* [cos(angle), sin(angle)]
-	probadist = compute_probability_distribution(
-		perturbed_layer, θ; instance,
-	)
-	compress_distribution!(probadist)
-	pl = plot_data(b, sample; θ=θ)
-	plot_probadist_perturbed && plot_distribution!(pl, probadist)
-	plot_expectation!(pl, probadist)
-end;
-end;
-
-# ╔═╡ 17e1378c-25fb-43bc-8391-e840d0e97a55
-let
-	plot_perturbed(PerturbedAdditive(f; nb_samples=200, ε, threaded=false, variance_reduction=false))
+    # Get length of the shortest path
+    k_short = argmin(dists[d, :])
+    if isinf(dists[d, k_short])
+        println("No shortest path with less than $length_max arcs")
+        return Int[]
+    end
+    # Deduce the path
+    v = d
+    path = [v]
+    k = k_short
+    while v != s
+        v = parents[v, k]
+        if v == 0
+            return Int[]
+        else
+            pushfirst!(path, v)
+            k = k - 1
+        end
+    end
+    return path
 end
 
-# ╔═╡ ff7d53c7-bcb6-4b7b-ab7a-caa11a148d72
-info(text; title="Info") = MD(Admonition("info", title, [text]));
+# ╔═╡ 6156f420-b44d-4f0f-8886-450df133742f
+function bellman_maximizer(θ::AbstractMatrix; kwargs...)
+    g = GridGraph(-θ; directions=QUEEN_DIRECTIONS)
+    path = grid_bellman_ford_warcraft(g, 1, nv(g))
+    y = path_to_matrix(g, path)
+    return y
+end
 
-# ╔═╡ 26bf1bba-ed54-40d4-a451-7c272dd910fc
-info(md"There is nothing to ''code'' in this notebook, it's mostly a demo with questions to check your understanding. Feel free to modify the existing code to experiment ideas.")
+# ╔═╡ 4a7084c0-92ee-4dee-8713-503476f67668
+danger(md"`InferOpt.jl` wrappers only take maximization algorithms as input. Don't forget to change some signs if your solving a minimization problem instead.")
 
-# ╔═╡ be21c86e-ed45-40e4-808c-c4c64ac22570
-info(md"Now you're all set to implement and train your own policy on a more complex problem. Go to the `02_warcraft.jl` notebook.")
+# ╔═╡ a9b71f1f-22ff-4dab-9912-498b25782f0b
+md"""
+!!! info "The maximizer function will depend on the experiment"
+	Note that we use the function `grid_dijkstra` already implemented in the `GridGraphs.jl` package when we deal with non-negative cell costs. In the following, we will use either Dijkstra or Ford-Bellman algorithm depending on the learning pipeline. You will have to choose the right maximizer function to use depending on the experiment you do.
+"""
+
+# ╔═╡ b8f90ac8-4c11-451e-a924-44eb03e975fe
+md"""
+## III - Learning functions
+"""
+
+# ╔═╡ f8331eab-bd6b-4d1b-8321-e2f86e61ddf9
+md"""
+### a) Convolutional neural network: predictor for the cost vector
+"""
+
+# ╔═╡ d874188c-5361-4753-abb8-e5f443868bcf
+md"""
+We implement several elementary functions to define our machine learning predictor for the cell costs.
+"""
+
+# ╔═╡ e5feb978-eaf2-49ca-9a47-d281572844a5
+"""
+    average_tensor(x)
+
+Average the tensor `x` along its third axis.
+"""
+function average_tensor(x)
+    return sum(x, dims=[3]) / size(x)[3]
+end
+
+# ╔═╡ 9e07b5ed-f7d6-4868-b64f-31fdd18245fb
+"""
+    neg_tensor(x)
+
+Compute minus softplus element-wise on tensor `x`.
+"""
+function neg_tensor(x)
+    return -softplus.(x)
+end
+
+# ╔═╡ 25ee6ed8-f1b1-4794-8c46-599ad710e08d
+"""
+    squeeze_last_dims(x)
+
+Squeeze two last dimensions on tensor `x`.
+"""
+function squeeze_last_dims(x)
+    return reshape(x, size(x, 1), size(x, 2))
+end
+
+# ╔═╡ ad81861d-c33e-45fd-82bc-cda2c02f066b
+md"""
+!!! info "CNN as predictor"
+	The following function defines the convolutional neural network we will use as cell costs predictor.
+"""
+
+# ╔═╡ dccccceb-16ba-49eb-9297-b2f98a61d03c
+"""
+    create_warcraft_embedding()
+
+Create and return a `Flux.Chain` embedding for the Warcraft terrains, inspired by [differentiation of blackbox combinatorial solvers](https://github.com/martius-lab/blackbox-differentiation-combinatorial-solvers/blob/master/models.py).
+
+The embedding is made as follows:
+1) The first 5 layers of ResNet18 (convolution, batch normalization, relu, maxpooling and first resnet block).
+2) An adaptive maxpooling layer to get a (12x12x64) tensor per input image.
+3) An average over the third axis (of size 64) to get a (12x12x1) tensor per input image.
+4) The element-wize `neg_tensor` function to get cell weights of proper sign to apply shortest path algorithms.
+5) A squeeze function to forget the two last dimensions. 
+"""
+function create_warcraft_embedding()
+    resnet18 = ResNet(18; pretrain=false, nclasses=1)
+    model_embedding = Chain(
+        resnet18.layers[1][1][1],
+        resnet18.layers[1][1][2],
+        resnet18.layers[1][1][3],
+        resnet18.layers[1][2][1],
+        AdaptiveMaxPool((12, 12)),
+        average_tensor,
+        neg_tensor,
+        squeeze_last_dims,
+    )
+    return model_embedding
+end
+
+# ╔═╡ 2828699a-1a34-4433-ada9-9a3a4bacbc20
+md"""
+We can build the encoder this way:
+"""
+
+# ╔═╡ 0e008598-29fe-4c6b-9872-509c13b9bd44
+initial_model = create_warcraft_embedding()
+
+# ╔═╡ a3841259-ab98-419b-b219-fce9ad445bfd
+md"""
+### b) Loss and gap utility functions
+"""
+
+# ╔═╡ b824c59f-4ec1-4230-84cc-89f52b68f36c
+md"""
+In the cell below, we define the `cost` function seen as black-box to evaluate the cost of a given path on the grid, given the true costs `c_true`.
+"""
+
+# ╔═╡ 67bb1416-a571-4eac-90c2-68cd8b0b90df
+cost(y; c_true) = dot(y, c_true)
+
+# ╔═╡ 1bd134f6-f9a0-4342-9721-0a03999bfb80
+md"""
+During training, we want to evaluate the quality of the predicted paths, both on the train and test datasets. We define the shortest path cost ratio between a candidate shortest path $\hat{y}$ and the label shortest path $y$ as: $r(\hat{y},y) = c(\hat{y}) / c(y)$.
+"""
+
+# ╔═╡ d5d01463-d8fa-4acd-a75c-1e09d73cf6e7
+md"""
+!!! info
+	The following code defines the `shortest_path_cost_ratio` function. The candidate path $\hat{y}$ is given by the output of `model` applied on image `x`, and `y` is the target shortest path.
+"""
+
+# ╔═╡ 7be97edf-e20d-4959-b1ae-46508af08337
+"""
+	shortest_path_cost_ratio(model, x, y, kwargs)
+Compute the ratio between the cost of the solution given by the `model` cell costs and the cost of the true solution.
+We evaluate both the shortest path with respect to the weights given by `model(x)` and the labelled shortest path `y`
+using the true cell costs stored in `kwargs.wg.weights`. 
+This ratio is by definition greater than one. The closer it is to one, the better is the solution given by the current 
+weights of `model`. We thus track this metric during training.
+"""
+function shortest_path_cost_ratio(model, x, y_true, θ_true; maximizer)
+    θ = model(x)
+    y = maximizer(θ)
+    return dot(θ_true, y) / dot(θ_true, y_true)
+end
+
+# ╔═╡ 2139734d-46af-4d5d-ab22-10f613259fc3
+"""
+	shortest_path_cost_ratio(model, batch)
+Compute the average cost ratio between computed and true shorest paths over `batch`. 
+"""
+function shortest_path_cost_ratio(model, batch; maximizer)
+    return sum(shortest_path_cost_ratio(model, item[1], item[2], item[3]; maximizer) for item in batch) / length(batch)
+end
+
+# ╔═╡ 65805cbc-05a4-40e8-8f0e-c6fd12eb9d12
+"""
+	shortest_path_cost_gap(; model, dataset)
+Compute the average cost ratio between computed and true shorest paths over `dataset`. 
+"""
+function shortest_path_cost_gap(; model, dataset, maximizer)
+    return (sum(shortest_path_cost_ratio(model, batch; maximizer) for batch in dataset) / length(dataset) - 1) * 100
+end
+
+# ╔═╡ 72863e38-ff93-4198-9ee5-0a6a12d82bd0
+md"""
+## IV - Training a policy
+"""
+
+# ╔═╡ e5a2fe30-141c-45bf-85c4-952e7c815dd4
+md"""
+As you know, the solution of a linear program is not differentiable with respect to its cost vector. Therefore, we need additional tricks to be able to update the parameters of the CNN defined by `create_warcraft_embedding`. Two points of view can be adopted: perturb or regularize the maximization problem. They can be unified when introducing probabilistic combinatorial layers, detailed in this [paper](https://arxiv.org/pdf/2207.13513.pdf). They are used in two different frameworks:
+
+- Learning by imitation when we have target shortest path examples in the dataset.
+- Learning by experience when we only have access to the images and to a black-box cost function to evaluate any candidate path.
+
+In this section, we explore different combinatorial layers, as well as the learning by imitation and learning by experience settings.
+"""
+
+# ╔═╡ 2f611b4f-29e5-4428-9838-6dfb339b1652
+md"""
+### a) Learning by imitation with additive perturbation
+"""
+
+# ╔═╡ f202a814-6b31-42b7-9e30-b8c36ff64644
+md"""
+#### 1) Hyperparameters
+"""
+
+# ╔═╡ e62e2e15-35dd-4a6a-8162-3c88db48b616
+md"""
+We first define the hyper-parameters for the learning process. They include:
+- The regularization size $\varepsilon$.
+- The number of samples drawn for the approximation of the expectation $M$.
+- The number of learning epochs `nb_epochs`.
+- The batch size for the stochastic gradient descent `batch_size`.
+- The starting learning rate for ADAM optimizer `lr_start`.
+"""
+
+# ╔═╡ ab731ae8-5c26-4c68-846d-e6941b0efdad
+tip(md"Feel free to change the values to improve the learning. Analyzing the impact of the various hyperparameters can be interesting to explore in your report. Batches can be built using the `train_dataset = Flux.DataLoader(train_data; batchsize=batch_size)` syntax.")
+
+# ╔═╡ 7393b144-8f60-4695-9617-5fc4324fab3a
+begin
+    ε = 0.1
+    M = 10
+    nb_epochs = 20
+    batch_size = 80
+    lr_start = 1e-3
+end;
+
+# ╔═╡ b8d4b382-143d-4483-b6fb-35ea3f495a1c
+md"""
+### Cross-validation for hyperparameters
+"""
+
+# ╔═╡ 491ce2dc-b6f5-44d8-9817-678c70af9a05
+shortest_path_maximizer = dijkstra_maximizer
+
+# ╔═╡ 1b1eb32d-c05a-481c-80c4-f10ce3781968
+begin
+	# Use bellman_maximizer because perturbations can create negative costs
+	perturbed = PerturbedAdditive(
+		bellman_maximizer; nb_samples=M, ε=ε, threaded=true, variance_reduction=false
+	)
+	fyl = FenchelYoungLoss(perturbed)
+	fyl_model = deepcopy(initial_model)
+	fyl_opt_state = Flux.setup(Adam(), fyl_model)
+	fyl_loss_history = Float64[]
+	fyl_gap_history = Float64[]
+	@progress "Training progress:" for epoch in 1:nb_epochs
+		total_loss = 0.0
+		for sample in train_dataset
+			val, grads = Flux.withgradient(fyl_model) do m
+			  θ = m(sample[1])
+			  fyl(θ, sample[2])
+			end
+			Flux.update!(fyl_opt_state, fyl_model, grads[1])
+			total_loss += val
+		end
+		push!(fyl_loss_history, total_loss)
+		# Use bellman_maximizer for evaluation too since model was trained with perturbations
+		push!(fyl_gap_history, shortest_path_cost_gap(model = fyl_model, dataset =  [train_dataset], maximizer = bellman_maximizer))
+	end
+end
+
+# ╔═╡ c8fb3d55-41ef-4931-bbb1-d005f345a83e
+let
+	plot(fyl_gap_history; label="fyl")
+end
+
+# ╔═╡ 1f88a235-3792-41bc-beb9-2f5405a027dc
+index_slider2 = md"""
+``n2 =`` $(@bind n2 Slider(1:length(dataset); default=1, show_value=true))
+"""
+
+# ╔═╡ 2ceb3ee2-82b7-4678-8902-2783c2d0d2c6
+
+
+# ╔═╡ af2c2d84-9d0c-4da7-8ede-11d00ba08989
+TODO("Implement a full Fenchel-Young loss training with an additive perturbation as shown in the demo tutorial. Evaluate the performance of the resulting policy and visualize the predicted paths with respect to imitated ones (you can use the `plot_image_weights_path` function for this). Comment your experiments and results (some figures/tables/visualizations may be useful).")
+
+# ╔═╡ 59643a4a-cde4-46bd-879f-8b9114ede1b4
+md"""
+### b) Learning by imitation with multiplicative perturbation
+"""
+
+# ╔═╡ dbadff1a-02c9-4ddc-aec8-8f2391667711
+md"""
+We introduce a variant of the additive pertubation defined above, which is simply based on an element-wise product $\odot$:
+"""
+
+# ╔═╡ 957f74d8-0c45-4c4e-ae6e-b4842b10f62f
+md"""
+${y}_\varepsilon^\odot (\theta) := \mathbb{E}_Z \bigg[\operatorname{argmax}_{y \in \mathcal{C}} (\theta \odot e^{\epsilon Z - \varepsilon^2 \mathbf{1} / 2})^\top y \bigg]$
+"""
+
+# ╔═╡ 8fcb0dd0-d3a8-48be-a424-dd4f74020cb9
+question_box(md"9. What is the advantage of this perturbation compared with the additive one in terms of combinatorial problem ? Which algorithm can we use to compute shortest paths ?")
+
+# ╔═╡ bdf15214-77ba-46e8-bcf6-9b993062edb3
+md"We omit the details of the loss derivations and concentrate on implementation."
+
+# ╔═╡ 0e470f9a-690a-4b4e-a923-e50f9a2265c1
+begin
+	# Use bellman_maximizer because perturbations can create negative costs
+	perturbed_x = PerturbedMultiplicative(
+		bellman_maximizer; nb_samples=M, ε=ε, threaded=true, variance_reduction=false
+	)
+	fyl_x = FenchelYoungLoss(perturbed_x)
+	fyl_model_x = deepcopy(initial_model)
+	fyl_opt_state_x = Flux.setup(Adam(), fyl_model_x)
+	fyl_loss_history_x = Float64[]
+	fyl_gap_history_x = Float64[]
+	@progress "Training progress:" for epoch in 1:nb_epochs
+		total_loss_x = 0.0
+		for sample in train_dataset
+			val, grads = Flux.withgradient(fyl_model_x) do m
+			  θ = m(sample[1])
+			  fyl_x(θ, sample[2])
+			end
+			Flux.update!(fyl_opt_state_x, fyl_model_x, grads[1])
+			total_loss_x += val
+		end
+		push!(fyl_loss_history_x, total_loss_x)
+		# Use bellman_maximizer for evaluation too since model was trained with perturbations
+		push!(fyl_gap_history_x, shortest_path_cost_gap(model = fyl_model_x, dataset =  [train_dataset], maximizer = bellman_maximizer))
+	end
+end
+
+# ╔═╡ 1c92e6c5-6f0a-4f8a-90eb-fd562412fd8c
+TODO("Implement the training similarly to previous subsection, by using a multiplicative perturbation instead of the additive one. Comment your experiments and results (some figures/tables/visualizations may be useful).")
+
+# ╔═╡ eca7efae-9123-4bac-a0a6-1175ecdd902a
+hint(md"You can modify the previous additive implementation below, by replacing the `PerturbedAdditive` regularization with a `PerturbedMultiplicative` one.")
+
+# ╔═╡ 8e3176fb-7f0a-453b-8cd5-bb5bf6d420bb
+md"""
+### c) Smart Predict then optimize
+"""
+
+# ╔═╡ 3d67bdde-d719-433f-a1a9-c80564723ed8
+TODO(md"Replace the `FenchelYoungLoss` by a `SPOPlusLoss` in order to leverage the knowledge about the true costs in the train dataset. Comment your experiments and results (some figures/tables/visualizations may be useful).")
+
+# ╔═╡ b8f6f6d0-a211-4525-a7f1-4975420c70e3
+hint(md"You can replace the `FenchelYoungLoss` by `SPOPlusLoss(true_maximizer)`, we do not need to use the `Perturbed` here.")
+
+# ╔═╡ c8c8ac99-a3db-415d-80fc-8d07889258d9
+md"""
+### d) Learning by experience with multiplicative perturbation
+"""
+
+# ╔═╡ 43e0662d-dd84-4380-8096-e58be6ffb5b9
+md"""
+When we restrict the train dataset to images $I$ and black-box cost functions $c$, we can not learn by imitation.
+"""
+
+# ╔═╡ 1bc9268f-6584-406f-bbec-bfe396d2808c
+TODO(md"Modify the code above to learn in a non-supervised way through risk minimization using a multiplicative perturbation and the black-box cost function. Comment your experiments and results (some figures/tables/visualizations may be useful).")
+
+# ╔═╡ c71d3b7e-cd51-11f0-b739-f7eeaa24414e
+begin
+    """
+        convert_image_for_plot(image::Array{Float32,3})::Array{RGB{N0f8},2}
+    Convert `image` to the proper data format to enable plots in Julia.
+    """
+    function convert_image_for_plot(image::Array{Float32,3})::Array{RGB{N0f8},2}
+        new_img = Array{RGB{N0f8},2}(undef, size(image)[1], size(image)[2])
+        for i = 1:size(image)[1]
+            for j = 1:size(image)[2]
+                new_img[i, j] = RGB{N0f8}(image[i, j, 1], image[i, j, 2], image[i, j, 3])
+            end
+        end
+        return new_img
+    end
+
+    """
+    	plot_image_weights_path(;im, weights, path)
+    Plot the image `im`, the weights `weights`, and the path `path` on the same Figure.
+    """
+    function plot_image_weights_path(x, y, θ; θ_title="Weights", y_title="Path", θ_true=θ)
+        im = dropdims(x; dims=4)
+        img = convert_image_for_plot(im)
+        p1 = Plots.plot(
+            img;
+            aspect_ratio=:equal,
+            framestyle=:none,
+            size=(300, 300),
+            title="Terrain image"
+        )
+        p2 = Plots.heatmap(
+            θ;
+            yflip=true,
+            aspect_ratio=:equal,
+            framestyle=:none,
+            padding=(0., 0.),
+            size=(300, 300),
+            legend=false,
+            title=θ_title,
+            clim=(minimum(θ_true), maximum(θ_true))
+        )
+        p3 = Plots.plot(
+            Gray.(y .* 0.7);
+            aspect_ratio=:equal,
+            framestyle=:none,
+            size=(300, 300),
+            title=y_title
+        )
+        plot(p1, p2, p3, layout=(1, 3), size=(900, 300))
+    end
+
+    """
+        plot_loss_and_gap(losses::Matrix{Float64}, gaps::Matrix{Float64},  options::NamedTuple; filepath=nothing)
+
+    Plot the train and test losses, as well as the train and test gaps computed over epochs.
+    """
+    function plot_loss_and_gap(losses::Matrix{Float64}, gaps::Matrix{Float64}; filepath=nothing)
+        p1 = plot(collect(1:nb_epochs), losses, title="Loss", xlabel="epochs", ylabel="loss", label=["train" "test"])
+        p2 = plot(collect(0:nb_epochs), gaps, title="Gap", xlabel="epochs", ylabel="ratio", label=["train" "test"])
+        pl = plot(p1, p2, layout=(1, 2))
+        isnothing(filepath) || Plots.savefig(pl, filepath)
+        return pl
+    end
+end;
+
+
+# ╔═╡ 6949e7e1-0997-4dee-a9ba-cadf1c8f56a6
+plot_image_weights_path(dataset[n]...)
+
+# ╔═╡ 6a3dedcc-122a-42bc-b232-63959140b87c
+plot_image_weights_path(dataset[n2]...)
+
+# ╔═╡ af2f2150-dbe6-4f6e-bacf-fe70356e9fad
+begin
+	# Predicted path with FY Additive (trained with perturbations, use bellman_maximizer)
+    x, y_true, wg = dataset[n2]
+
+    θ = fyl_model(x) 
+
+    y_pred = bellman_maximizer(θ)   
+
+    plot_image_weights_path(x, y_pred, θ)
+end
+
+
+# ╔═╡ 29236941-486f-42f5-8934-99e9c46a5650
+begin
+	# Predicted with additive perturbation
+    plot_image_weights_path(x, y_pred, θ)
+end
+
+
+# ╔═╡ e3afdc3e-3596-4b97-a92e-d1e6f26fcab9
+begin
+	# Predicted with multiplicative perturbation (use bellman_maximizer)
+    θ_x = fyl_model_x(x) 
+	
+    y_pred_x = bellman_maximizer(θ_x)  
+
+    plot_image_weights_path(x, y_pred_x, θ_x)
+end
+
+
+# ╔═╡ c71d7e2e-cd51-11f0-bdf5-cdb493bc9e1a
+plot_image_weights_path(dataset[n]...)
+
+# ╔═╡ 57f1a036-cd5f-11f0-9f4b-5138e0748e76
+begin
+	# Cross-validation: test different values of ε and M
+	# Use bellman_maximizer for CV because perturbations can create negative costs
+	ε_values = [0.05, 0.1, 0.2, 0.3]
+	M_values = [5, 10, 20]
+	cv_results = Dict()
+	
+	# Use a subset for faster CV
+	cv_train, cv_val = splitobs(train_dataset; at=0.7)
+	
+	@progress "Cross-validation:" for ε_cv in ε_values
+		for M_cv in M_values
+			# Quick training for CV (fewer epochs)
+			# Use bellman_maximizer because perturbations can create negative costs
+			perturbed_cv = PerturbedAdditive(
+				bellman_maximizer; nb_samples=M_cv, ε=ε_cv, threaded=true, variance_reduction=false
+			)
+			fyl_cv = FenchelYoungLoss(perturbed_cv)
+			model_cv = deepcopy(initial_model)
+			opt_state_cv = Flux.setup(Adam(), model_cv)
+			
+			# Train for fewer epochs for speed
+			for epoch in 1:5
+				for sample in cv_train
+					val, grads = Flux.withgradient(model_cv) do m
+						θ = m(sample[1])
+						fyl_cv(θ, sample[2])
+					end
+					Flux.update!(opt_state_cv, model_cv, grads[1])
+				end
+			end
+			
+			# Evaluate on validation set using bellman_maximizer
+			val_gap = shortest_path_cost_gap(model = model_cv, dataset = [cv_val], maximizer = bellman_maximizer)
+			cv_results[(ε_cv, M_cv)] = val_gap
+		end
+	end
+	
+	# Find best hyperparameters
+	best_params = argmin(cv_results)
+	best_ε, best_M = best_params
+	best_gap = cv_results[best_params]
+	
+	println("Best hyperparameters: ε=$(best_ε), M=$(best_M), gap=$(best_gap)")
+end
+
+# ╔═╡ 57f1a8da-cd5f-11f0-9bb4-4bea78cad1d0
+let
+	# Plot CV results as heatmap
+	ε_plot = [ε for (ε, _) in keys(cv_results)]
+	M_plot = [M for (_, M) in keys(cv_results)]
+	gaps_plot = [cv_results[(ε, M)] for (ε, M) in zip(ε_plot, M_plot)]
+	
+	# Create matrix for heatmap
+	ε_unique = sort(unique(ε_plot))
+	M_unique = sort(unique(M_plot))
+	gap_matrix = zeros(length(ε_unique), length(M_unique))
+	
+	for (i, ε) in enumerate(ε_unique)
+		for (j, M) in enumerate(M_unique)
+			gap_matrix[i, j] = cv_results[(ε, M)]
+		end
+	end
+	
+	heatmap(M_unique, ε_unique, gap_matrix, 
+		xlabel="M (nb_samples)", ylabel="ε", 
+		title="Cross-validation: Gap vs Hyperparameters",
+		color=:viridis)
+end
+
+# ╔═╡ a1b2c3d4-e5f6-7890-abcd-ef1234567891
+begin
+	# SPOPlusLoss implementation
+	# Use bellman_maximizer because the model (neg_tensor) produces negative costs
+	spo_loss = SPOPlusLoss(bellman_maximizer)
+	spo_model = deepcopy(initial_model)
+	spo_opt_state = Flux.setup(Adam(), spo_model)
+	spo_loss_history = Float64[]
+	spo_gap_history = Float64[]
+	@progress "Training progress (SPO+):" for epoch in 1:nb_epochs
+		total_loss = 0.0
+		for sample in train_dataset
+			val, grads = Flux.withgradient(spo_model) do m
+			  θ = m(sample[1])
+			  # SPOPlusLoss: loss(θ, y_true) where y_true is the target path
+			  spo_loss(θ, sample[2])
+			end
+			Flux.update!(spo_opt_state, spo_model, grads[1])
+			total_loss += val
+		end
+		push!(spo_loss_history, total_loss)
+		push!(spo_gap_history, shortest_path_cost_gap(model = spo_model, dataset = [train_dataset], maximizer = bellman_maximizer))
+	end
+end
+
+# ╔═╡ 57f1e930-cd5f-11f0-ad96-1dd45f2a4b72
+let
+	plot(spo_gap_history; label="SPO+", title="Training gap evolution (SPO+)", xlabel="Epoch", ylabel="Gap")
+end
+
+# ╔═╡ 57f1fbb6-cd5f-11f0-a4a6-87bd3b4e8944
+begin
+	# Risk minimization with multiplicative perturbation
+	# Use bellman_maximizer because perturbations can create negative costs
+	perturbed_risk = PerturbedMultiplicative(
+		bellman_maximizer; nb_samples=M, ε=ε, threaded=true, variance_reduction=false
+	)
+	risk_model = deepcopy(initial_model)
+	risk_opt_state = Flux.setup(Adam(), risk_model)
+	risk_loss_history = Float64[]
+	risk_gap_history = Float64[]
+	@progress "Training progress (Risk Min):" for epoch in 1:nb_epochs
+		total_loss = 0.0
+		for sample in train_dataset
+			val, grads = Flux.withgradient(risk_model) do m
+			  θ_pred = m(sample[1])
+			  # Risk minimization: E[cost(perturbed_maximizer(θ_pred))] 
+			  # The perturbed maximizer returns the expected path, we compute its cost
+			  y_perturbed = perturbed_risk(θ_pred)
+			  cost(y_perturbed; c_true=sample[3])
+			end
+			Flux.update!(risk_opt_state, risk_model, grads[1])
+			total_loss += val
+		end
+		push!(risk_loss_history, total_loss)
+		# Use bellman_maximizer for evaluation too since model was trained with perturbations
+		push!(risk_gap_history, shortest_path_cost_gap(model = risk_model, dataset = [train_dataset], maximizer = bellman_maximizer))
+	end
+end
+
+# ╔═╡ 57f20eba-cd5f-11f0-9ac2-cbf759690df5
+let
+	plot(risk_gap_history; label="Risk Min", title="Training gap evolution (Risk Minimization)", xlabel="Epoch", ylabel="Gap")
+end
+
+# ╔═╡ 57f21c52-cd5f-11f0-83e8-c9718c7417cf
+md"""
+## V - Comparison of methods
+"""
+
+# ╔═╡ 57f22a6c-cd5f-11f0-93a7-2961dc910546
+let
+	# Compare all methods
+	plot(1:length(fyl_gap_history), fyl_gap_history; label="FY Additive", linewidth=2)
+	plot!(1:length(fyl_gap_history_x), fyl_gap_history_x; label="FY Multiplicative", linewidth=2)
+	plot!(1:length(spo_gap_history), spo_gap_history; label="SPO+", linewidth=2)
+	plot!(1:length(risk_gap_history), risk_gap_history; label="Risk Min", linewidth=2)
+	plot!(title="Comparison of training methods", xlabel="Epoch", ylabel="Gap", legend=:topright)
+end
+
+# ╔═╡ 57f23c9e-cd5f-11f0-88b2-01641a10d5e0
+begin
+	# Final evaluation on test set
+	# Use bellman_maximizer for all methods because the model (neg_tensor) produces negative costs
+	test_gaps = Dict(
+		"FY Additive" => shortest_path_cost_gap(model = fyl_model, dataset = [test_dataset], maximizer = bellman_maximizer),
+		"FY Multiplicative" => shortest_path_cost_gap(model = fyl_model_x, dataset = [test_dataset], maximizer = bellman_maximizer),
+		"SPO+" => shortest_path_cost_gap(model = spo_model, dataset = [test_dataset], maximizer = bellman_maximizer),
+		"Risk Min" => shortest_path_cost_gap(model = risk_model, dataset = [test_dataset], maximizer = bellman_maximizer)
+	)
+	
+	println("Test set gaps:")
+	for (method, gap) in test_gaps
+		println("  $method: $(round(gap, digits=2))%")
+	end
+end
+
+# ╔═╡ 57f242ea-cd5f-11f0-9a00-a118de30bfc2
+let
+	# Bar plot of test gaps
+	methods = collect(keys(test_gaps))
+	gaps = collect(values(test_gaps))
+	bar(methods, gaps, title="Test set performance comparison", ylabel="Gap (%)", xlabel="Method", legend=false)
+end
+
+# ╔═╡ cde4d086-7a06-4d94-bfb3-4f130a3a4419
+# Visualisation complète des 4 modèles (poids + chemins + coûts)
+begin
+	Random.seed!(42)
+	sample_idx_viz = rand(1:length(dataset))
+	x_viz, y_true_viz, wg_viz = dataset[sample_idx_viz]
+	
+	θ_fyl_viz = fyl_model(x_viz)
+	y_pred_fyl_viz = bellman_maximizer(θ_fyl_viz)
+	θ_fyl_x_viz = fyl_model_x(x_viz)
+	y_pred_fyl_x_viz = bellman_maximizer(θ_fyl_x_viz)
+	θ_spo_viz = spo_model(x_viz)
+	y_pred_spo_viz = bellman_maximizer(θ_spo_viz)
+	θ_risk_viz = risk_model(x_viz)
+	y_pred_risk_viz = bellman_maximizer(θ_risk_viz)
+	
+	cost_true_viz = dot(wg_viz, y_true_viz)
+	cost_fyl_viz = dot(wg_viz, y_pred_fyl_viz)
+	cost_fyl_x_viz = dot(wg_viz, y_pred_fyl_x_viz)
+	cost_spo_viz = dot(wg_viz, y_pred_spo_viz)
+	cost_risk_viz = dot(wg_viz, y_pred_risk_viz)
+	
+	p1 = plot_image_weights_path(x_viz, y_pred_fyl_viz, θ_fyl_viz; 
+		θ_title="Weights FY Add (cost: $cost_fyl_viz, ratio: $(cost_fyl_viz/cost_true_viz))", 
+		y_title="Path FY Add")
+	
+	p2 = plot_image_weights_path(x_viz, y_pred_fyl_x_viz, θ_fyl_x_viz; 
+		θ_title="Weights FY Mult (cost: $cost_fyl_x_viz, ratio: $(cost_fyl_x_viz/cost_true_viz))", 
+		y_title="Path FY Mult")
+	
+	p3 = plot_image_weights_path(x_viz, y_pred_spo_viz, θ_spo_viz; 
+		θ_title="Weights SPO+ (cost: $cost_spo_viz, ratio: $(cost_spo_viz/cost_true_viz))", 
+		y_title="Path SPO+")
+	
+	p4 = plot_image_weights_path(x_viz, y_pred_risk_viz, θ_risk_viz; 
+		θ_title="Weights Risk Min (cost: $cost_risk_viz, ratio: $(cost_risk_viz/cost_true_viz))", 
+		y_title="Path Risk Min")
+	
+	plot(p1, p2, p3, p4, layout=(2, 2), size=(2400, 1600),
+		plot_title="Comparaison des 4 modèles - Sample $sample_idx_viz (Coût optimal: $cost_true_viz)")
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
-DecisionFocusedLearningBenchmarks = "2fbe496a-299b-4c81-bab5-c44dfc55cf20"
-DifferentiableExpectations = "fc55d66b-b2a8-4ccc-9d64-c0c2166ceb36"
 Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
-HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
+GridGraphs = "dd2b58c7-5af7-4f17-9e46-57c68ac813fb"
+Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
 InferOpt = "4846b161-c94e-4150-8dac-c7ae193c601f"
-JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
-LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MLUtils = "f1d291b0-491e-4a28-83b9-f70985020b54"
 Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
+Metalhead = "dbeba491-748d-5e0e-a39e-b530a07fa0cc"
+NPZ = "15e1cf62-19b3-5cfa-8e77-841668bca605"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoTeachingTools = "661c6b06-c737-4d37-b85c-46df65de6f69"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 ProgressLogging = "33c8b6b6-d38a-422a-b730-caa89a2f386c"
-Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
-Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [compat]
-DecisionFocusedLearningBenchmarks = "~0.3.0"
-DifferentiableExpectations = "~0.2.0"
 Flux = "~0.16.5"
-HiGHS = "~1.20.1"
+Graphs = "~1.13.1"
+GridGraphs = "~0.10.1"
+Images = "~0.26.2"
 InferOpt = "~0.7.1"
-JuMP = "~1.29.3"
-LaTeXStrings = "~1.4.0"
+MLUtils = "~0.4.8"
+Metalhead = "~0.9.5"
+NPZ = "~0.4.3"
 Plots = "~1.41.1"
 PlutoTeachingTools = "~0.4.6"
 PlutoUI = "~0.7.75"
 ProgressLogging = "~0.1.5"
-Zygote = "~0.7.10"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -964,13 +1066,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.2"
 manifest_format = "2.0"
-project_hash = "662b1f48913c42459f9dcb1d486309005f5c61b1"
-
-[[deps.ASL_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "6252039f98492252f9e47c312c8ffda0e3b9e78d"
-uuid = "ae81ac8f-d209-56e5-92de-9978fef736f9"
-version = "0.1.3+0"
+project_hash = "c73d656d41c596f53cabaa2be2019dd7fb92c824"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1149,12 +1245,6 @@ git-tree-sha1 = "aebf55e6d7795e02ca500a689d326ac979aaf89e"
 uuid = "9718e550-a3fa-408a-8086-8db961cd8217"
 version = "0.1.1"
 
-[[deps.BenchmarkTools]]
-deps = ["Compat", "JSON", "Logging", "Printf", "Profile", "Statistics", "UUIDs"]
-git-tree-sha1 = "7fecfb1123b8d0232218e2da0c213004ff15358d"
-uuid = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
-version = "1.6.3"
-
 [[deps.BitFlags]]
 git-tree-sha1 = "0691e34b3bb8be9307330f88d1a3c3f25466c24d"
 uuid = "d1d4a3ce-64b1-5f1a-9ba4-7e7e69966f35"
@@ -1229,12 +1319,6 @@ git-tree-sha1 = "3e22db924e2945282e70c33b75d4dde8bfa44c94"
 uuid = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
 version = "0.15.8"
 
-[[deps.CodecBzip2]]
-deps = ["Bzip2_jll", "TranscodingStreams"]
-git-tree-sha1 = "84990fa864b7f2b4901901ca12736e45ee79068c"
-uuid = "523fee87-0ab8-5b00-afb7-3ecf72e48cfd"
-version = "0.8.5"
-
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
 git-tree-sha1 = "962834c22b66e32aa10f7611c08c8ca4e20749a9"
@@ -1272,11 +1356,6 @@ deps = ["ColorTypes", "FixedPointNumbers", "Reexport"]
 git-tree-sha1 = "37ea44092930b1811e666c3bc38065d7d87fcc74"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.13.1"
-
-[[deps.Combinatorics]]
-git-tree-sha1 = "8010b6bb3388abe68d95743dcbea77650bb2eddf"
-uuid = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
-version = "1.0.3"
 
 [[deps.CommonSubexpressions]]
 deps = ["MacroTools"]
@@ -1324,12 +1403,6 @@ git-tree-sha1 = "d9d26935a0bcffc87d2613ce14c527c99fc543fd"
 uuid = "f0e56b4a-5159-44fe-b623-3e5288b988bb"
 version = "2.5.0"
 
-[[deps.ConstrainedShortestPaths]]
-deps = ["DataStructures", "DocStringExtensions", "Graphs", "PiecewiseLinearFunctions", "SparseArrays", "Statistics"]
-git-tree-sha1 = "f7542172829038295f6603fe7bf96581cb51f31c"
-uuid = "b3798467-87dc-4d99-943d-35a1bd39e395"
-version = "0.6.5"
-
 [[deps.ConstructionBase]]
 git-tree-sha1 = "b4b092499347b18a015186eae3042f72267106cb"
 uuid = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
@@ -1374,12 +1447,6 @@ git-tree-sha1 = "abe83f3a2f1b857aac70ef8b269080af17764bbe"
 uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.16.0"
 
-[[deps.DataDeps]]
-deps = ["HTTP", "Libdl", "Reexport", "SHA", "Scratch", "p7zip_jll"]
-git-tree-sha1 = "8ae085b71c462c2cb1cfedcb10c3c877ec6cf03f"
-uuid = "124859b0-ceae-595e-8997-d05f6a7a8dfe"
-version = "0.7.13"
-
 [[deps.DataStructures]]
 deps = ["Compat", "InteractiveUtils", "OrderedCollections"]
 git-tree-sha1 = "4e1fe97fdaed23e9dc21d4d664bea76b65fc50a0"
@@ -1401,12 +1468,6 @@ deps = ["Artifacts", "Expat_jll", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "473e9afc9cf30814eb67ffa5f2db7df82c3ad9fd"
 uuid = "ee1fde0b-3d02-5ea6-8484-8dfef6360eab"
 version = "1.16.2+0"
-
-[[deps.DecisionFocusedLearningBenchmarks]]
-deps = ["Colors", "Combinatorics", "ConstrainedShortestPaths", "DataDeps", "Distributions", "DocStringExtensions", "FileIO", "Flux", "Graphs", "HiGHS", "Images", "InferOpt", "Ipopt", "IterTools", "JSON", "JuMP", "LaTeXStrings", "LinearAlgebra", "Metalhead", "NPZ", "Plots", "Printf", "Random", "Requires", "SCIP", "SimpleWeightedGraphs", "SparseArrays", "Statistics", "StatsBase"]
-git-tree-sha1 = "d56af92d7cf24d0e2bb5cd488beb56d4fb801a11"
-uuid = "2fbe496a-299b-4c81-bab5-c44dfc55cf20"
-version = "0.3.0"
 
 [[deps.DefineSingletons]]
 git-tree-sha1 = "0fba8b706d0178b4dc7fd44a96a92382c9065c2c"
@@ -1654,11 +1715,6 @@ git-tree-sha1 = "fcb0584ff34e25155876418979d4c8971243bb89"
 uuid = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
 version = "3.4.0+2"
 
-[[deps.GMP_jll]]
-deps = ["Artifacts", "Libdl"]
-uuid = "781609d7-10c4-51f6-84f2-b8444358ff6d"
-version = "6.3.0+2"
-
 [[deps.GPUArraysCore]]
 deps = ["Adapt"]
 git-tree-sha1 = "83cf05ab16a73219e5f6bd1bdfa9848fa24ac627"
@@ -1725,6 +1781,12 @@ git-tree-sha1 = "7a98c6502f4632dbe9fb1973a4244eaa3324e84d"
 uuid = "86223c79-3864-5bf0-83f7-82e725a168b6"
 version = "1.13.1"
 
+[[deps.GridGraphs]]
+deps = ["DataStructures", "FillArrays", "Graphs", "SparseArrays"]
+git-tree-sha1 = "219584c79a649f5ae4301ff0924f235e92cc60d4"
+uuid = "dd2b58c7-5af7-4f17-9e46-57c68ac813fb"
+version = "0.10.1"
+
 [[deps.Grisu]]
 git-tree-sha1 = "53bb909d1151e57e2484c3d1b53e19552b887fb2"
 uuid = "42e2da0e-8278-4e71-bc24-59509adca0fe"
@@ -1747,18 +1809,6 @@ git-tree-sha1 = "2eaa69a7cab70a52b9687c8bf950a5a93ec895ae"
 uuid = "076d061b-32b6-4027-95e0-9a2c6f6d7e74"
 version = "0.2.0"
 
-[[deps.HiGHS]]
-deps = ["HiGHS_jll", "MathOptIIS", "MathOptInterface", "PrecompileTools", "SparseArrays"]
-git-tree-sha1 = "7eaca80074d6389bbf83e4dfb1eaf6b3cd78d150"
-uuid = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
-version = "1.20.1"
-
-[[deps.HiGHS_jll]]
-deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "METIS_jll", "OpenBLAS32_jll", "Zlib_jll"]
-git-tree-sha1 = "e0539aa3405df00e963a9a56d5e903a280f328e7"
-uuid = "8fd58aa0-07eb-5a78-9b36-339c94fd15ea"
-version = "1.12.0+0"
-
 [[deps.HistogramThresholding]]
 deps = ["ImageBase", "LinearAlgebra", "MappedArrays"]
 git-tree-sha1 = "7194dfbb2f8d945abdaf68fa9480a965d6661e69"
@@ -1770,12 +1820,6 @@ deps = ["BitTwiddlingConvenienceFunctions", "IfElse", "Libdl", "Static"]
 git-tree-sha1 = "8e070b599339d622e9a081d17230d74a5c473293"
 uuid = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
 version = "0.1.17"
-
-[[deps.Hwloc_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "XML2_jll", "Xorg_libpciaccess_jll"]
-git-tree-sha1 = "3d468106a05408f9f7b6f161d9e7715159af247b"
-uuid = "e33a78d0-f292-5ffc-b300-72abe9b543c8"
-version = "2.12.2+0"
 
 [[deps.HypergeometricFunctions]]
 deps = ["LinearAlgebra", "OpenLibm_jll", "SpecialFunctions"]
@@ -2007,22 +2051,6 @@ weakdeps = ["Dates", "Test"]
     InverseFunctionsDatesExt = "Dates"
     InverseFunctionsTestExt = "Test"
 
-[[deps.Ipopt]]
-deps = ["Ipopt_jll", "LinearAlgebra", "OpenBLAS32_jll", "PrecompileTools"]
-git-tree-sha1 = "ef90a75a3ee8c2b170f6c177d4d003348dd30f67"
-uuid = "b6b21f68-93f8-5de0-b562-5493be1d77c9"
-version = "1.11.0"
-weakdeps = ["MathOptInterface"]
-
-    [deps.Ipopt.extensions]
-    IpoptMathOptInterfaceExt = "MathOptInterface"
-
-[[deps.Ipopt_jll]]
-deps = ["ASL_jll", "Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "MUMPS_seq_jll", "SPRAL_jll", "libblastrampoline_jll"]
-git-tree-sha1 = "546c40fd3718c65d48296dd6cec98af9904e3ca4"
-uuid = "9cc047cb-c261-5740-88fc-0cf96f7bdcc7"
-version = "300.1400.1400+0"
-
 [[deps.IrrationalConstants]]
 git-tree-sha1 = "b2d91fe939cae05960e760110b328288867b5758"
 uuid = "92d709cd-6900-40b7-9082-c6be49f344b6"
@@ -2061,21 +2089,15 @@ uuid = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
 version = "1.7.1"
 
 [[deps.JSON]]
-deps = ["Dates", "Mmap", "Parsers", "Unicode"]
-git-tree-sha1 = "31e996f0a15c7b280ba9f76636b3ff9e2ae58c9a"
+deps = ["Dates", "Logging", "Parsers", "PrecompileTools", "StructUtils", "UUIDs", "Unicode"]
+git-tree-sha1 = "5b6bb73f555bc753a6153deec3717b8904f5551c"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
-version = "0.21.4"
+version = "1.3.0"
 
-[[deps.JSON3]]
-deps = ["Dates", "Mmap", "Parsers", "PrecompileTools", "StructTypes", "UUIDs"]
-git-tree-sha1 = "411eccfe8aba0814ffa0fdf4860913ed09c34975"
-uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
-version = "1.14.3"
+    [deps.JSON.extensions]
+    JSONArrowExt = ["ArrowTypes"]
 
-    [deps.JSON3.extensions]
-    JSON3ArrowExt = ["ArrowTypes"]
-
-    [deps.JSON3.weakdeps]
+    [deps.JSON.weakdeps]
     ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 
 [[deps.JpegTurbo]]
@@ -2089,18 +2111,6 @@ deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "4255f0032eafd6451d707a51d5f0248b8a165e4d"
 uuid = "aacddb02-875f-59d6-b918-886e6ef4fbf8"
 version = "3.1.3+0"
-
-[[deps.JuMP]]
-deps = ["LinearAlgebra", "MacroTools", "MathOptInterface", "MutableArithmetics", "OrderedCollections", "PrecompileTools", "Printf", "SparseArrays"]
-git-tree-sha1 = "b76f23c45d75e27e3e9cbd2ee68d8e39491052d0"
-uuid = "4076af6c-e467-56ae-b986-b466b2749572"
-version = "1.29.3"
-
-    [deps.JuMP.extensions]
-    JuMPDimensionalDataExt = "DimensionalData"
-
-    [deps.JuMP.weakdeps]
-    DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
 
 [[deps.JuliaSyntaxHighlighting]]
 deps = ["StyledStrings"]
@@ -2302,12 +2312,6 @@ weakdeps = ["ChainRulesCore", "ForwardDiff", "NNlib", "SpecialFunctions"]
     ForwardDiffNNlibExt = ["ForwardDiff", "NNlib"]
     SpecialFunctionsExt = "SpecialFunctions"
 
-[[deps.METIS_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "2eefa8baa858871ae7770c98c3c2a7e46daba5b4"
-uuid = "d00139f3-1899-568f-a2f0-47f597d42d70"
-version = "5.1.3+0"
-
 [[deps.MIMEs]]
 git-tree-sha1 = "c64d943587f7187e751162b3b84445bbbd79f691"
 uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
@@ -2382,12 +2386,6 @@ git-tree-sha1 = "a772d8d1987433538a5c226f79393324b55f7846"
 uuid = "f1d291b0-491e-4a28-83b9-f70985020b54"
 version = "0.4.8"
 
-[[deps.MUMPS_seq_jll]]
-deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "METIS_jll", "libblastrampoline_jll"]
-git-tree-sha1 = "840b83c65b27e308095c139a457373850b2f5977"
-uuid = "d7ed1dd3-d0ae-5e8e-bfb4-87a502085b8d"
-version = "500.600.201+0"
-
 [[deps.MacroTools]]
 git-tree-sha1 = "1e0228a030642014fe5cfe68c2c0a818f9e3f522"
 uuid = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
@@ -2407,18 +2405,6 @@ version = "0.4.2"
 deps = ["Base64", "JuliaSyntaxHighlighting", "StyledStrings"]
 uuid = "d6f4376e-aef5-505a-96c1-9c027394607a"
 version = "1.11.0"
-
-[[deps.MathOptIIS]]
-deps = ["MathOptInterface"]
-git-tree-sha1 = "31d4a6353ea00603104f11384aa44dd8b7162b28"
-uuid = "8c4f8055-bd93-4160-a86b-a0c04941dbff"
-version = "0.1.1"
-
-[[deps.MathOptInterface]]
-deps = ["BenchmarkTools", "CodecBzip2", "CodecZlib", "DataStructures", "ForwardDiff", "JSON3", "LinearAlgebra", "MutableArithmetics", "NaNMath", "OrderedCollections", "PrecompileTools", "Printf", "SparseArrays", "SpecialFunctions", "Test"]
-git-tree-sha1 = "a2cbab4256690aee457d136752c404e001f27768"
-uuid = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
-version = "1.46.0"
 
 [[deps.MbedTLS]]
 deps = ["Dates", "MbedTLS_jll", "MozillaCACerts_jll", "NetworkOptions", "Random", "Sockets"]
@@ -2481,12 +2467,6 @@ version = "0.3.4"
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 version = "2025.5.20"
 
-[[deps.MutableArithmetics]]
-deps = ["LinearAlgebra", "SparseArrays", "Test"]
-git-tree-sha1 = "22df8573f8e7c593ac205455ca088989d0a2c7a0"
-uuid = "d8a4904e-b15c-11e9-3269-09a3773c0cb0"
-version = "1.6.7"
-
 [[deps.NNlib]]
 deps = ["Adapt", "Atomix", "ChainRulesCore", "GPUArraysCore", "KernelAbstractions", "LinearAlgebra", "Random", "ScopedValues", "Statistics"]
 git-tree-sha1 = "eb6eb10b675236cee09a81da369f94f16d77dc2f"
@@ -2528,12 +2508,6 @@ deps = ["PrettyPrint"]
 git-tree-sha1 = "1a0fa0e9613f46c9b8c11eee38ebb4f590013c5e"
 uuid = "71a1bf82-56d0-4bbc-8a3c-48b961074391"
 version = "0.1.5"
-
-[[deps.Ncurses_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "b5e7e7ad16adfe5f68530f9f641955b5b0f12bbb"
-uuid = "68e3532b-a499-55ff-9963-d1c0c0748b3a"
-version = "6.5.1+0"
 
 [[deps.NearestNeighbors]]
 deps = ["Distances", "StaticArrays"]
@@ -2577,12 +2551,6 @@ deps = ["Adapt", "ChainRulesCore", "Compat", "GPUArraysCore", "LinearAlgebra", "
 git-tree-sha1 = "bfe8e84c71972f77e775f75e6d8048ad3fdbe8bc"
 uuid = "0b1bfda6-eb8a-41d2-88d8-f5af5cad476f"
 version = "0.2.10"
-
-[[deps.OpenBLAS32_jll]]
-deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "ece4587683695fe4c5f20e990da0ed7e83c351e7"
-uuid = "656ef2d0-ae68-5445-9ca0-591084a874a2"
-version = "0.3.29+0"
 
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
@@ -2707,12 +2675,6 @@ git-tree-sha1 = "ba0ea009d9f1e38162d016ca54627314b6d8aac8"
 uuid = "570af359-4316-4cb7-8c74-252c00c2016b"
 version = "1.2.1"
 
-[[deps.PiecewiseLinearFunctions]]
-deps = ["DocStringExtensions", "RecipesBase"]
-git-tree-sha1 = "2dbf9e2f277e7613493c2a1b9ac9dcd41e9abfda"
-uuid = "08f3856d-0b18-48ce-8d4b-10c3630068d6"
-version = "0.4.6"
-
 [[deps.Pixman_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "LLVMOpenMP_jll", "Libdl"]
 git-tree-sha1 = "db76b1ecd5e9715f3d043cec13b2ec93ce015d53"
@@ -2824,11 +2786,6 @@ deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 version = "1.11.0"
 
-[[deps.Profile]]
-deps = ["StyledStrings"]
-uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
-version = "1.11.0"
-
 [[deps.ProgressLogging]]
 deps = ["Logging", "SHA", "UUIDs"]
 git-tree-sha1 = "d95ed0324b0799843ac6f7a6a85e65fe4e5173f0"
@@ -2919,12 +2876,6 @@ weakdeps = ["FixedPointNumbers"]
     [deps.Ratios.extensions]
     RatiosFixedPointNumbersExt = "FixedPointNumbers"
 
-[[deps.Readline_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Ncurses_jll"]
-git-tree-sha1 = "6044f482a91c7aa2b82ab614aedd726be633ad05"
-uuid = "05236dd9-4125-5232-aa7c-9ec0c9b2c25a"
-version = "8.2.13+0"
-
 [[deps.RealDot]]
 deps = ["LinearAlgebra"]
 git-tree-sha1 = "9f0a1b71baaf7650f4fa8a1d168c7fb6ee41f0c9"
@@ -2994,24 +2945,6 @@ weakdeps = ["RecipesBase"]
     [deps.Rotations.extensions]
     RotationsRecipesBaseExt = "RecipesBase"
 
-[[deps.SCIP]]
-deps = ["Libdl", "LinearAlgebra", "MathOptInterface", "OpenBLAS32_jll", "SCIP_PaPILO_jll", "SCIP_jll"]
-git-tree-sha1 = "de60c2cea424a4df4cadcc68700340943aabbbae"
-uuid = "82193955-e24f-5292-bf16-6f2c5261a85f"
-version = "0.12.7"
-
-[[deps.SCIP_PaPILO_jll]]
-deps = ["Artifacts", "Bzip2_jll", "CompilerSupportLibraries_jll", "GMP_jll", "Ipopt_jll", "JLLWrappers", "Libdl", "OpenBLAS32_jll", "Readline_jll", "Zlib_jll", "bliss_jll", "boost_jll", "oneTBB_jll"]
-git-tree-sha1 = "6133f22272ec18887d0746fd89ae7218d0a2aeee"
-uuid = "fc9abe76-a5e6-5fed-b0b7-a12f309cf031"
-version = "900.200.400+0"
-
-[[deps.SCIP_jll]]
-deps = ["Artifacts", "Bzip2_jll", "CompilerSupportLibraries_jll", "GMP_jll", "Ipopt_jll", "JLLWrappers", "Libdl", "Readline_jll", "Zlib_jll", "boost_jll"]
-git-tree-sha1 = "658d911948de4ff88fe2b61823bdd1e1add98a7d"
-uuid = "e5ac4fe4-a920-5659-9bf8-f9f73e9e79ce"
-version = "900.200.400+0"
-
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 version = "0.7.0"
@@ -3032,12 +2965,6 @@ deps = ["IfElse", "Static", "VectorizationBase"]
 git-tree-sha1 = "456f610ca2fbd1c14f5fcf31c6bfadc55e7d66e0"
 uuid = "476501e8-09a2-5ece-8869-fb82de89a1fa"
 version = "0.6.43"
-
-[[deps.SPRAL_jll]]
-deps = ["Artifacts", "CompilerSupportLibraries_jll", "Hwloc_jll", "JLLWrappers", "Libdl", "METIS_jll", "libblastrampoline_jll"]
-git-tree-sha1 = "34b9dacd687cace8aa4d550e3e9bb8615f1a61e9"
-uuid = "319450e9-13b8-58e8-aa9f-8fd1420848ab"
-version = "2024.1.18+0"
 
 [[deps.SciMLPublic]]
 git-tree-sha1 = "ed647f161e8b3f2973f24979ec074e8d084f1bee"
@@ -3239,11 +3166,19 @@ weakdeps = ["Adapt", "GPUArraysCore", "KernelAbstractions", "LinearAlgebra", "Sp
     StructArraysSparseArraysExt = "SparseArrays"
     StructArraysStaticArraysExt = "StaticArrays"
 
-[[deps.StructTypes]]
+[[deps.StructUtils]]
 deps = ["Dates", "UUIDs"]
-git-tree-sha1 = "159331b30e94d7b11379037feeb9b690950cace8"
-uuid = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
-version = "1.11.0"
+git-tree-sha1 = "79529b493a44927dd5b13dde1c7ce957c2d049e4"
+uuid = "ec057cc2-7a8d-4b58-b3b3-92acb9f63b42"
+version = "2.6.0"
+
+    [deps.StructUtils.extensions]
+    StructUtilsMeasurementsExt = ["Measurements"]
+    StructUtilsTablesExt = ["Tables"]
+
+    [deps.StructUtils.weakdeps]
+    Measurements = "eff96d63-e80a-5855-80a2-b1b0885c5ab7"
+    Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 
 [[deps.StyledStrings]]
 uuid = "f489334b-da3d-4c2e-b8f0-e476e12c162b"
@@ -3422,12 +3357,6 @@ git-tree-sha1 = "c1a7aa6219628fcd757dede0ca95e245c5cd9511"
 uuid = "efce3f68-66dc-5838-9240-27a6d6f5f9b6"
 version = "1.0.0"
 
-[[deps.XML2_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Libiconv_jll", "Zlib_jll"]
-git-tree-sha1 = "80d3930c6347cfce7ccf96bd3bafdf079d9c0390"
-uuid = "02c8fc9c-b97f-50b9-bbe4-9be30ff0a78a"
-version = "2.13.9+0"
-
 [[deps.XZ_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "fee71455b0aaa3440dfdd54a9a36ccef829be7d4"
@@ -3505,12 +3434,6 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll"]
 git-tree-sha1 = "7ed9347888fac59a618302ee38216dd0379c480d"
 uuid = "ea2f1a96-1ddc-540d-b46f-429655e07cfa"
 version = "0.9.12+0"
-
-[[deps.Xorg_libpciaccess_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Zlib_jll"]
-git-tree-sha1 = "4909eb8f1cbf6bd4b1c30dd18b2ead9019ef2fad"
-uuid = "a65dc6b1-eb27-53a1-bb3e-dea574b5389e"
-version = "0.18.1+0"
 
 [[deps.Xorg_libxcb_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libXau_jll", "Xorg_libXdmcp_jll"]
@@ -3618,18 +3541,6 @@ deps = ["ChainRulesCore", "MacroTools"]
 git-tree-sha1 = "434b3de333c75fc446aa0d19fc394edafd07ab08"
 uuid = "700de1a5-db45-46bc-99cf-38207098b444"
 version = "0.2.7"
-
-[[deps.bliss_jll]]
-deps = ["Artifacts", "GMP_jll", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "f8b75e896a326a162a4f6e998990521d8302c810"
-uuid = "508c9074-7a14-5c94-9582-3d4bc1871065"
-version = "0.77.0+1"
-
-[[deps.boost_jll]]
-deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Zlib_jll"]
-git-tree-sha1 = "25fb6ecbb784a45f8ea74584fa631a9e85393dd0"
-uuid = "28df3c45-c428-5900-9ff8-a3135698ca75"
-version = "1.87.0+0"
 
 [[deps.eudev_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
@@ -3756,188 +3667,124 @@ version = "1.9.2+0"
 """
 
 # ╔═╡ Cell order:
-# ╟─d9a39939-a17a-4b69-8a66-9c14cdda0dda
-# ╟─49071561-3d84-4ada-9b1c-3f515a923487
-# ╟─03e45e1a-dc8c-4558-b806-7c5d6b979a7f
-# ╟─7a0a60d6-b8b8-400d-bafb-dc8c1051451c
-# ╟─26bf1bba-ed54-40d4-a451-7c272dd910fc
-# ╟─03ffc934-bf27-404c-a9ab-cb769d66cbbb
-# ╟─ee1de947-7460-4699-904d-79d0ea5ecd8d
-# ╟─debab8eb-499b-4a9a-b931-139de6dd5428
-# ╟─bac8d12f-5b91-45a1-9d41-092368ee2b46
-# ╟─4ed1e8a3-7089-47d3-8ea3-43b66cd902c4
-# ╟─feef9bf7-bd13-4302-b3a9-7ce0f226a38d
-# ╟─892670d9-5f1f-48df-b8d2-5b45da8ae6cb
-# ╟─c568247b-3f4c-47e9-897b-ca5ecd0aafb9
-# ╠═9eb65168-078c-44be-87bc-0444b6beac9b
-# ╟─e4ffb5bb-e392-4810-a1bd-20ebe819a9e1
-# ╟─b7db666f-b136-4c0b-a812-84fa7826800d
-# ╠═ae2d6a37-fcfa-4a9d-9d72-391e70328e3c
-# ╟─5fdbf1e7-b18d-4905-9a49-f495a52f9084
-# ╟─80c500f3-742e-44c3-9b85-ba2f31a7d529
-# ╟─2a55b892-f140-4cb8-8c4f-e28de0a68d14
-# ╟─0c57363b-456c-45fd-8f66-1a99f22fd1ff
-# ╟─b204c3bd-33a4-4a51-91f1-d6c9245506d1
-# ╟─82689477-2f93-4c65-80cb-29b3117672e4
-# ╟─9590a732-4e44-424b-9d96-72c6bb29a478
-# ╟─97741f5f-1c28-4874-b531-298b9c8f3190
-# ╟─df9337f3-95c7-4b79-8fc4-22e8c958a22d
-# ╟─ae852c58-0a0e-47cb-ac4d-a9438b6573a2
-# ╟─34b6edfb-ee8d-4910-a4f8-21cc75d32e83
-# ╟─56b2e7c3-9a79-4930-9282-a9869ac55d1f
-# ╟─24260185-b532-490e-9ca9-4da2eb906385
-# ╟─cc1cddbe-b228-41b1-93bc-086a7e1a98c4
-# ╟─d8222966-0378-4440-8ddc-6561ec2d43b9
-# ╟─df8b5b8e-5cad-4a2a-b448-4f97269f658c
-# ╟─38da533e-2293-4fb1-837a-7d017a263d95
-# ╠═e4f3343c-0416-4483-8413-a87187a91c85
-# ╟─b0f67836-5710-4412-b8aa-fe67560f4888
-# ╟─9bae5c5a-b565-4824-b017-85d9c57aaf4e
-# ╠═7bac6322-c094-45ab-8a28-badd7f870bb6
-# ╟─36be976e-bc2c-46f8-b071-1b38e252488f
-# ╠═1c6f8529-7d83-4d18-9e2f-51d78df69306
-# ╟─99f720d8-e341-43b9-b3a6-10a96ebd68cf
-# ╟─6aef9bce-6e15-4fed-bfd0-9b2dc42050b7
-# ╠═e1fb07c9-2189-4c43-a7d3-7dc747ffd580
-# ╠═18d09173-ec3e-4040-b3df-fc5703772c56
-# ╠═50a06ced-bb19-4dac-8676-09af4aa2a474
-# ╠═d96bc96c-0187-45fd-a8eb-781fa2ae7b82
-# ╟─c7f54145-90ca-4a7c-8c47-f811558ee4c9
-# ╟─ee0a909f-2112-458f-a27b-c81570c47ded
-# ╟─b27eed1d-4c1c-46f9-82cd-a365359e5a89
-# ╠═8e943ed2-9eff-425e-924f-149f82f02fdb
-# ╟─7d703911-3b1f-490e-af2b-10d7195ee323
-# ╠═5ce29e1a-0b5a-4294-89c7-a5ee87f74691
-# ╠═56ed0c63-8f54-4ec7-8c04-3434996e581e
-# ╠═4174ef91-40cd-4201-9158-39caf684ff3e
-# ╟─8aea5bc7-dbe9-437d-b8c1-e3dcc904462d
-# ╠═db9a5a30-a633-457e-b582-1117a64634db
-# ╟─60816579-faa9-486c-aae6-864963350571
-# ╠═03bf13d9-a590-4a9b-838f-0af592f7d5ab
-# ╟─eb26a589-12a0-4779-b0a1-ac2440b971fe
-# ╠═f2770135-3dcf-45ed-8153-b9d5b6091126
-# ╟─762dfdf8-e56b-470d-b055-1471704622aa
-# ╠═0c57c55b-0fb8-43e7-b81e-0ae75e174055
-# ╠═e7464dcb-7528-459b-844e-e2e2588b868b
-# ╠═4dd77df7-392f-4a36-9e5f-8c16244accc6
-# ╟─963cea78-27e6-4f3a-96b5-88e6fc7e070c
-# ╟─e2a68ad5-1676-47b6-8dbc-78dfcdcf0f58
-# ╟─28f6aa13-9d7a-4e13-a2fc-c1913ba7a801
-# ╠═8ea1ae20-d775-470e-a8f2-79a8a3bf26ca
-# ╠═bbcd2b11-b92b-4a2f-b3bd-9cac8a18be65
-# ╠═dea0ccaf-9094-4116-a251-00caef8697d1
-# ╠═50656ff3-6853-48a8-93db-89dae0c4420e
-# ╟─8a1b9780-de0f-452f-914f-263facf9cedc
-# ╟─8378e2c1-6240-4bd0-bab5-1dce36d5f50b
-# ╟─fe5e035c-9005-44b5-b4d5-3509716f6079
-# ╠═db6d130a-8e18-4777-bb1d-49b6f1ee6702
-# ╠═13edb9da-8515-4a34-abd8-f8e2a4958c5f
-# ╟─d8e628f9-b22c-4316-8aea-3a8049881d98
-# ╟─9ba1aac1-a60c-41d2-8125-45a95d0d3010
-# ╠═607a02db-854a-49ec-a010-60fb8e74a556
-# ╠═db0a354c-8a0d-41b8-bc20-c9bdfb9bd76e
-# ╟─47463503-90ed-4626-bb4d-2f593083e077
-# ╠═f70e4d33-fa7d-4d93-92d5-1ee6517a0298
-# ╟─0ebb7e0a-8b02-4824-aaed-694382ff08ae
-# ╠═47464acc-f0f4-4d94-9476-340119eab545
-# ╟─7301381f-8397-4ce1-9668-0cd0239b1de4
-# ╟─bf8ab4e5-8573-43d3-91fa-61a3c7613497
-# ╟─90ab00df-727d-45c1-b8c4-52dbfe124c93
-# ╠═714904d9-78c7-4c25-a696-00952c295c26
-# ╠═cf16c70a-1ec7-4ba3-9585-d101bd2d5864
-# ╠═1cc350cd-efc5-4e3b-bac2-3d7626d71c40
-# ╠═301a0004-01ee-47be-878d-fe6c0b2a3747
-# ╟─3ebbce52-c866-41e5-addb-6e4484dc4c8f
-# ╠═d8ba2596-6834-4bf5-adfb-df1afd49d064
-# ╠═4b0ba4d9-9f70-4e6f-a9a2-1136851f0e19
-# ╠═9870446b-33b8-4ca0-9538-90a853ee1cfa
-# ╠═e91d99f8-c633-4ed1-917c-ad88e96532f0
-# ╟─c31eedb6-cce8-4a35-ba7b-3c8eec88799b
-# ╠═2f95ebe4-42c9-4e3e-896a-aedd841327ca
-# ╟─fadfc810-f3ca-47b6-963e-d752177edc6f
-# ╟─6317732d-4b74-4ec3-969e-282f9cde2c52
-# ╟─af3006c1-407e-472c-8af0-27178ff58457
-# ╟─fc06e9c1-d50e-4e0b-be00-add2ad033359
-# ╠═0f05119d-4c8a-4625-9990-c9dab30c6868
-# ╠═8e9c3b5d-f8d2-48c6-a259-966400d21faf
-# ╠═fc26b41b-5bb7-456b-a430-c0c922450144
-# ╠═9d3f1108-7c24-47a7-9c9f-de0808cbad69
-# ╟─0369abd7-0b6b-444b-a06a-9a7552ab2c18
-# ╟─1327ac64-273a-469d-a22c-dedb5cd91fd5
-# ╠═17e1378c-25fb-43bc-8391-e840d0e97a55
-# ╠═bdb3b2f6-9c87-4276-8e47-d1b48d0046ad
-# ╠═3bd0e77b-b425-46d0-90f3-f0b32228b599
-# ╟─f4da304a-7110-4e04-92a0-61a053e67605
-# ╟─417bf6c1-5627-4d73-bd6a-c7b9ef77c70b
-# ╟─db276073-88c0-492a-984f-c22d9594c3d1
-# ╠═2a4512ce-ed89-4abe-b1bb-f6b996e6f655
-# ╠═c4ebfdef-a04e-436f-94ef-45738bd72162
-# ╟─00dfd4d4-7776-45b2-b1cc-97454f8738e4
-# ╠═c2952f16-f403-4296-8d0e-e84b110e40df
-# ╟─2d90b286-584a-486e-b425-e4d44424c6b2
-# ╠═2b642e06-52a3-4554-b82d-654e1f25547f
-# ╠═e59a9fdb-b80b-4017-9e46-363f15e19fc6
-# ╠═bef4aea1-dae4-4a32-8913-cfefbe9c6919
-# ╠═c9362acf-62ac-456e-8c5c-915cad6c2563
-# ╠═2862f826-c740-44a9-a5eb-d41d9e113603
-# ╠═494e706c-0031-4546-bd49-26896aa3e31b
-# ╠═0e022469-7d68-4a54-a577-e7b7d3ae4cb9
-# ╟─09fe9f66-4495-4936-9fff-683da0a50718
-# ╟─2fa9d9fb-b4ec-41c4-bedc-23bec20bd069
-# ╟─024002f9-8e52-4cad-aef2-9dd027515927
-# ╠═db4d6daf-980e-4483-9d6a-bfc8522a56dd
-# ╟─6954540a-a432-4aeb-9999-f2eccafe7583
-# ╠═62de8049-97fe-4212-983b-f6d0471a20db
-# ╠═3e02af72-c902-4784-8cd6-0514e35603df
-# ╟─8b6f5e2e-e1a6-4351-ae05-47bfcefa9835
-# ╠═05664cb3-60a9-4630-8594-6c5d28c540be
-# ╠═7157d9d2-ecb6-4a34-80b5-6396d6a84fc9
-# ╟─49a6c2b6-fa05-48d0-b4d3-1bc178bd7ff3
-# ╟─6150ca0a-2aa6-4ee4-9665-b7a8b9f79e7b
-# ╟─14907262-c41e-4e77-86fb-414a036b14a4
-# ╠═732654c7-c13c-4ed9-9123-23531b5fc600
-# ╠═74c0397a-9bd8-4880-957e-433427e3f9ca
-# ╠═0b7e710c-70f3-46fd-9bb5-fff89a6fe0f5
-# ╟─29941802-5c0b-4e95-ae49-928ec5b7073a
-# ╠═338fc455-4f3a-4161-bcae-ef8f31d59350
-# ╠═5679caf1-3146-493e-90fc-1d3b9f09d0f1
-# ╟─5e59ffd1-aa9e-49ff-b1a7-df16f35bb7f1
-# ╠═9baf4f5a-dabb-466d-bb62-186f6c531ff8
-# ╠═1938dfd1-5dee-48e1-aed3-a07a5bfdb6ed
-# ╠═29d01466-1f7b-4d83-bedb-37ffde979f93
-# ╠═0f91aeae-59dd-4f3d-885a-d6cb71590b56
-# ╟─58ad764b-a6fa-4675-a621-d9b1abac96a5
-# ╟─98b80831-9b7b-41de-a224-1973e0395842
-# ╠═194ed746-cce9-4d76-bf9a-0525296611bb
-# ╠═ce2ca9fc-1618-4e07-a72f-0943718130d3
-# ╠═d0c2e03f-8d4f-453b-b2cd-72df2c5d4a53
-# ╟─bed2578d-5b30-46d9-978e-953050c93df3
-# ╠═b2af8062-f2cf-4a92-9f11-4d9d815d0bdb
-# ╠═73c2127d-10b8-4bb8-9dae-6783a22cd820
-# ╠═6638f88d-5af0-49d6-a6f9-8b74fbb2df04
-# ╠═f069b67a-2ede-4b41-b823-9609eb4fd245
-# ╠═0946a4fe-a144-4d74-9a67-0d49e46103a7
-# ╠═25f5ea75-035d-442d-9154-50ee92365ed4
-# ╟─be21c86e-ed45-40e4-808c-c4c64ac22570
-# ╟─bb98d7da-786c-4e64-acff-afb243dac706
-# ╠═47f43ec9-0004-446c-8b85-cebfca4ae7af
-# ╠═9582839c-afe7-4c00-9baa-26a00da644f1
-# ╠═caf7551a-31b3-4656-bb34-b7cbd0d81159
-# ╟─54430531-5f61-4151-8a9f-bc879d5fa025
-# ╠═5e571df1-75b6-42ff-b97b-7196d41b8536
-# ╠═acfd9016-dd5a-4e06-b7b6-1964faa636be
-# ╠═0a91b806-abee-4038-ae67-5119a3f5c6af
-# ╠═40f13bb3-2ff0-48a3-a689-4578ab957609
-# ╠═382ff047-bd1c-4c4d-9119-0835de9be0bd
-# ╠═5a9813cf-c8f9-410b-9ae9-726dc735a782
-# ╠═a456ce1e-4f4f-4ae1-aa72-1136b5422804
-# ╠═a5d0f77e-5cff-4268-ba52-bd5b39268e82
-# ╠═07b1fb27-25cf-4a1a-9db4-a89727972986
-# ╟─5165515a-1375-4c80-854d-f4c424a63840
-# ╠═94d354a2-f5d8-437a-ac19-ca657a5d28ea
-# ╠═5755f0aa-e093-4e29-8cfa-f011f23e47ba
-# ╠═ec0223ac-c7e9-43d4-8142-31117ac8a947
-# ╠═255082db-2cbc-45cb-ac99-b726b97cff9d
-# ╠═ff7d53c7-bcb6-4b7b-ab7a-caa11a148d72
+# ╟─3caab09b-8a6d-43f2-980f-2d673ee499ab
+# ╟─0c9922e4-a7d0-4cbb-bcc4-32073d9eb50d
+# ╠═08f2596a-4131-4b0c-9b86-487f6be4f726
+# ╠═80000669-972b-4af5-a480-7fd8c2474fb2
+# ╟─10c1ec66-768a-4a71-a08b-564d9a67221f
+# ╟─b4382ccf-d4bc-4b46-918e-153989ef32be
+# ╟─911025ef-3d9e-4d07-a98d-8e4bc1f14961
+# ╟─3e9e496f-d67f-4208-b519-a44eae435f83
+# ╟─189f8d87-b53f-4f73-811a-4ebea02a8be0
+# ╠═9098fe0b-4f5b-418d-a5f4-56e5d37c2f90
+# ╟─f519ffe7-20e9-4f73-bb4a-c75968cc3726
+# ╟─530e6977-3c75-4fae-b607-ac8ef8ee2b9f
+# ╠═da56630b-2d19-47d2-a9e3-8ff94028b875
+# ╟─d7370e3f-432c-4fef-b1cb-1104632a9c90
+# ╟─814e8a03-6604-45e8-8a76-af5426310503
+# ╠═dfda5483-27b6-4c2f-92fa-85056213cb60
+# ╠═fc3ee1d2-743f-4fc3-a283-7068593d42af
+# ╠═2358c5ce-6dda-40f9-b431-451ea4c08af1
+# ╟─9e996433-1f27-486d-8ec6-4d270ed52a47
+# ╠═061f9c2a-c35f-4c2e-81c0-4facce56b4dd
+# ╠═4e35f281-b979-4c59-a6a0-ea353993a918
+# ╠═9eeb6cf2-dd95-4b47-a4ef-3fc160203eb9
+# ╟─5735b993-d8fc-4348-aa40-8c9cf90ec599
+# ╟─3ea10dd4-3ce8-4e14-9505-03001d3dbafd
+# ╟─9c00ae19-1a42-4349-a140-6182820f6f36
+# ╟─785f3549-d715-469b-8ede-a442fe45bdc2
+# ╟─2efec1ab-6aae-42d5-9ffb-f1c6a715eb4e
+# ╟─741beead-49be-4e02-9c2c-f73dcacf1155
+# ╟─3af34e34-0a53-43ae-a1c2-4d30aa352c93
+# ╟─843e7019-a761-4b7c-b5b9-d4e0423147e2
+# ╟─d9afef10-f50d-4c61-8ebc-332e1ca5d77e
+# ╟─758ae807-7324-4b9a-820f-fcafae83a3a8
+# ╟─1cd5c53e-cd29-4fc1-aaad-bec834762231
+# ╠═9cca518e-50d2-49cb-9cf0-b22a29236e5e
+# ╟─01ce2a8b-0bc7-495b-bf31-3f4cdf465dc6
+# ╠═5b8d73d2-e965-4950-a79e-91324f206b14
+# ╠═293ee492-a924-47ac-8c32-42e9555b50dd
+# ╟─b6794e99-5d0e-4a58-8fad-699cf537475e
+# ╠═2ba43383-74e1-4e38-884a-d13d74bccfca
+# ╠═6949e7e1-0997-4dee-a9ba-cadf1c8f56a6
+# ╟─0ec8d253-f842-4a8d-ae18-ba3f43085aa6
+# ╟─39f32cf0-4cea-4ecd-bb6e-fe96cdcbbab9
+# ╟─42dff3ce-8f06-4a3d-87bd-cb4036f03962
+# ╟─3d0c8161-3c98-4bff-9462-db74c81d7a4c
+# ╟─36354a96-326d-462e-b7cf-7f5412bda188
+# ╠═3d050270-17e6-4ce1-afc1-c46a9d639cf9
+# ╟─33538a99-917a-4df8-b021-d6cef55e3166
+# ╠═da2fb70b-ea02-4192-8f7a-94c0b27e1f76
+# ╟─b69c50bc-e84f-4314-bbd8-35b7e87bb601
+# ╟─922e1262-699a-41b4-8a80-9579cb6e68e4
+# ╟─9590b21c-af44-4fc1-891d-081f99af93e5
+# ╠═80092823-00b1-4095-8f05-042c50a1e0c9
+# ╠═549205eb-c5fd-4de9-82f3-f032005afcd3
+# ╠═6156f420-b44d-4f0f-8886-450df133742f
+# ╟─4a7084c0-92ee-4dee-8713-503476f67668
+# ╟─a9b71f1f-22ff-4dab-9912-498b25782f0b
+# ╟─b8f90ac8-4c11-451e-a924-44eb03e975fe
+# ╟─f8331eab-bd6b-4d1b-8321-e2f86e61ddf9
+# ╟─d874188c-5361-4753-abb8-e5f443868bcf
+# ╠═e5feb978-eaf2-49ca-9a47-d281572844a5
+# ╠═9e07b5ed-f7d6-4868-b64f-31fdd18245fb
+# ╟─25ee6ed8-f1b1-4794-8c46-599ad710e08d
+# ╟─ad81861d-c33e-45fd-82bc-cda2c02f066b
+# ╠═dccccceb-16ba-49eb-9297-b2f98a61d03c
+# ╟─2828699a-1a34-4433-ada9-9a3a4bacbc20
+# ╠═0e008598-29fe-4c6b-9872-509c13b9bd44
+# ╟─a3841259-ab98-419b-b219-fce9ad445bfd
+# ╟─b824c59f-4ec1-4230-84cc-89f52b68f36c
+# ╠═67bb1416-a571-4eac-90c2-68cd8b0b90df
+# ╟─1bd134f6-f9a0-4342-9721-0a03999bfb80
+# ╟─d5d01463-d8fa-4acd-a75c-1e09d73cf6e7
+# ╠═7be97edf-e20d-4959-b1ae-46508af08337
+# ╠═2139734d-46af-4d5d-ab22-10f613259fc3
+# ╟─65805cbc-05a4-40e8-8f0e-c6fd12eb9d12
+# ╟─72863e38-ff93-4198-9ee5-0a6a12d82bd0
+# ╟─e5a2fe30-141c-45bf-85c4-952e7c815dd4
+# ╟─2f611b4f-29e5-4428-9838-6dfb339b1652
+# ╟─f202a814-6b31-42b7-9e30-b8c36ff64644
+# ╟─e62e2e15-35dd-4a6a-8162-3c88db48b616
+# ╟─ab731ae8-5c26-4c68-846d-e6941b0efdad
+# ╠═7393b144-8f60-4695-9617-5fc4324fab3a
+# ╠═b8d4b382-143d-4483-b6fb-35ea3f495a1c
+# ╠═491ce2dc-b6f5-44d8-9817-678c70af9a05
+# ╠═1b1eb32d-c05a-481c-80c4-f10ce3781968
+# ╠═c8fb3d55-41ef-4931-bbb1-d005f345a83e
+# ╠═1f88a235-3792-41bc-beb9-2f5405a027dc
+# ╠═2ceb3ee2-82b7-4678-8902-2783c2d0d2c6
+# ╠═6a3dedcc-122a-42bc-b232-63959140b87c
+# ╠═af2f2150-dbe6-4f6e-bacf-fe70356e9fad
+# ╠═af2c2d84-9d0c-4da7-8ede-11d00ba08989
+# ╟─59643a4a-cde4-46bd-879f-8b9114ede1b4
+# ╟─dbadff1a-02c9-4ddc-aec8-8f2391667711
+# ╟─957f74d8-0c45-4c4e-ae6e-b4842b10f62f
+# ╟─8fcb0dd0-d3a8-48be-a424-dd4f74020cb9
+# ╟─bdf15214-77ba-46e8-bcf6-9b993062edb3
+# ╠═0e470f9a-690a-4b4e-a923-e50f9a2265c1
+# ╠═29236941-486f-42f5-8934-99e9c46a5650
+# ╠═e3afdc3e-3596-4b97-a92e-d1e6f26fcab9
+# ╟─1c92e6c5-6f0a-4f8a-90eb-fd562412fd8c
+# ╟─eca7efae-9123-4bac-a0a6-1175ecdd902a
+# ╟─8e3176fb-7f0a-453b-8cd5-bb5bf6d420bb
+# ╟─3d67bdde-d719-433f-a1a9-c80564723ed8
+# ╟─b8f6f6d0-a211-4525-a7f1-4975420c70e3
+# ╟─c8c8ac99-a3db-415d-80fc-8d07889258d9
+# ╟─43e0662d-dd84-4380-8096-e58be6ffb5b9
+# ╟─1bc9268f-6584-406f-bbec-bfe396d2808c
+# ╠═c71d3b7e-cd51-11f0-b739-f7eeaa24414e
+# ╠═c71d7e2e-cd51-11f0-bdf5-cdb493bc9e1a
+# ╠═57f1a036-cd5f-11f0-9f4b-5138e0748e76
+# ╠═57f1a8da-cd5f-11f0-9bb4-4bea78cad1d0
+# ╠═a1b2c3d4-e5f6-7890-abcd-ef1234567891
+# ╠═57f1e930-cd5f-11f0-ad96-1dd45f2a4b72
+# ╠═57f1fbb6-cd5f-11f0-a4a6-87bd3b4e8944
+# ╠═57f20eba-cd5f-11f0-9ac2-cbf759690df5
+# ╠═57f21c52-cd5f-11f0-83e8-c9718c7417cf
+# ╠═57f22a6c-cd5f-11f0-93a7-2961dc910546
+# ╠═57f23c9e-cd5f-11f0-88b2-01641a10d5e0
+# ╠═57f242ea-cd5f-11f0-9a00-a118de30bfc2
+# ╠═cde4d086-7a06-4d94-bfb3-4f130a3a4419
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

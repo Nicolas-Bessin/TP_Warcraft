@@ -644,7 +644,7 @@ typeof(train_dataset[1])
 # ╔═╡ d1d3e4c2-ec75-4dd5-a4bc-7bc22732adb8
 begin
 	perturbed_add = PerturbedAdditive(
-		dijkstra_maximizer; nb_samples=nb_samples, ε=ε, threaded=true, variance_reduction=false
+		bellman_maximizer; nb_samples=nb_samples, ε=ε, threaded=true, variance_reduction=false
 	)
 	
 	fyl = FenchelYoungLoss(perturbed_add)
@@ -701,9 +701,25 @@ plot_image_weights_path(dataset[n]...)
 begin
 	x = dataset[n][1]
 	infered_weights = model_add(x)
-	infered_y = dijkstra_maximizer(infered_weights)
+	infered_y = bellman_maximizer(infered_weights)
 	plot_image_weights_path(x, infered_y, infered_weights)
 end
+
+# ╔═╡ 71722711-8410-43f7-9e47-0a6cf4aae6f4
+begin
+	function count_diff(model)
+		diff = 0
+		for i ∈ 1:nb_samples
+			infered_weight = model(dataset[i][1])
+			infered_y = bellman_maximizer(infered_weight)
+			diff += infered_y != dataset[i][2]
+		end
+		return diff
+	end
+
+	count_diff(model_add)
+end
+	
 
 # ╔═╡ 1c92e6c5-6f0a-4f8a-90eb-fd562412fd8c
 TODO("Implement the training similarly to previous subsection, by using a multiplicative perturbation instead of the additive one. Comment your experiments and results (some figures/tables/visualizations may be useful).")
@@ -795,6 +811,9 @@ plot_image_weights_path(dataset[n]...)
 # Inference
 plot_image_weights_path(x, dijkstra_maximizer(model_mult(x)), model_mult(x))
 
+# ╔═╡ b2fb9bff-ba46-4cd9-8da8-05e88a10624f
+count_diff(model_mult)
+
 # ╔═╡ 3d67bdde-d719-433f-a1a9-c80564723ed8
 TODO(md"Replace the `FenchelYoungLoss` by a `SPOPlusLoss` in order to leverage the knowledge about the true costs in the train dataset. Comment your experiments and results (some figures/tables/visualizations may be useful).")
 
@@ -825,7 +844,7 @@ gap_history_spop_testing = Float64[]
 			# So this probably should involve theta_true = sample[3] at some point
 		  spop_loss(θ, sample[2])
 		end
-		Flux.update!(opt_state_mult, model_spop, grads[1])
+		Flux.update!(opt_state_spop, model_spop, grads[1])
 		total_loss += val
 	end
 	push!(loss_history_spop, total_loss)
@@ -883,6 +902,100 @@ md"""
 md"""
 When we restrict the train dataset to images $I$ and black-box cost functions $c$, we can not learn by imitation.
 """
+
+# ╔═╡ 56db88e4-51ef-44f3-b4f3-d80ff64b911d
+begin
+perturbed_risk = PerturbedMultiplicative(
+		bellman_maximizer; nb_samples=M, ε=ε, threaded=true, variance_reduction=false
+	)
+model_risk = deepcopy(initial_model)
+opt_state_risk = Flux.setup(Adam(), model_risk)
+loss_history_risk = Float64[]
+gap_history_risk = Float64[]
+gap_history_risk_testing = Float64[]
+@progress "Training progress:" for epoch in 1:nb_epochs
+	total_loss = 0.0
+	for sample in train_dataset
+		val, grads = Flux.withgradient(model_risk) do model
+		  theta = model(sample[1])
+		  # Loss is the true cost of the prediction
+		  y_pred = perturbed_risk(theta)
+		  cost(y_pred; c_true = sample[3])
+		end
+		Flux.update!(opt_state_risk, model_risk, grads[1])
+		total_loss += val
+	end
+	push!(loss_history_risk, total_loss)
+	# Training gap
+	gap = shortest_path_cost_gap(
+		model = model_risk, dataset = [train_dataset],
+		maximizer = bellman_maximizer 
+		)
+	push!(gap_history_risk, gap)
+	# Testing gap
+	gap_test = shortest_path_cost_gap(
+		model = model_risk, dataset = [test_dataset], 
+		maximizer = bellman_maximizer
+		)
+	push!(gap_history_risk_testing, gap_test)
+end
+end
+
+# ╔═╡ f50d07e6-ea5e-4886-8070-ca3ae2088a81
+begin
+	plot(gap_history_risk, label = "Training")
+	plot!(gap_history_risk_testing, label = "Testing")
+	xlabel!("Iterations")
+	ylabel!("Gap")
+	
+end
+
+# ╔═╡ 843af876-1cad-4a68-aa1e-6242bfbd8528
+begin
+	plot(loss_history_risk, label = "Loss", legendposition = :topright)
+	xlabel!("Iterations")
+	ylabel!("Loss")
+end
+
+# ╔═╡ f53707ac-8d0e-4639-ad88-1934b16f4ded
+index_slider
+
+# ╔═╡ 02b740ea-4f85-43ba-ab10-b4002a95f036
+# Data
+plot_image_weights_path(dataset[n]...)
+
+# ╔═╡ c90a8566-9088-462f-b7f7-e2780a26394c
+# Inference
+plot_image_weights_path(x, dijkstra_maximizer(model_risk(x)), model_risk(x))
+
+# ╔═╡ d54c3297-0b44-432e-98fd-449c9880e82d
+md"""
+## Methods Comparison  
+"""
+
+# ╔═╡ 5a435070-5c76-4e3b-8911-1fc1e86151cd
+begin
+	plot(gap_history_add, label = "FYL - Additive")
+	plot!(gap_history_mult, label = "FYL - Multiplicative")
+	plot!(gap_history_spop[1:nb_epochs], label = "SPOP")
+	plot!(gap_history_risk, label = "Empirical risk minimization")
+	xlabel!("Iterations")
+	ylabel!("Gap")
+	title!("Training gap")
+	
+end
+
+# ╔═╡ ec197904-7a5d-4d25-a9de-93d498ea6dd9
+begin
+	plot(gap_history_add_testing, label = "FYL - Additive")
+	plot!(gap_history_mult_testing, label = "FYL - Multiplicative")
+	plot!(gap_history_spop_testing[1:nb_epochs], label = "SPOP")
+	plot!(gap_history_risk_testing, label = "Empirical risk minimization")
+	xlabel!("Iterations")
+	ylabel!("Gap")
+	title!("Testing gap")
+	
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -3614,11 +3727,12 @@ version = "1.9.2+0"
 # ╠═42dad64c-eea5-4aa3-9e24-6336c969fd35
 # ╠═694efce0-cb01-4ba2-ab2b-4c420e3cdcfd
 # ╠═52283a6b-7c43-4783-9e9e-598becf1cbc6
+# ╠═71722711-8410-43f7-9e47-0a6cf4aae6f4
 # ╟─1c92e6c5-6f0a-4f8a-90eb-fd562412fd8c
 # ╟─59643a4a-cde4-46bd-879f-8b9114ede1b4
 # ╟─dbadff1a-02c9-4ddc-aec8-8f2391667711
 # ╟─957f74d8-0c45-4c4e-ae6e-b4842b10f62f
-# ╟─8fcb0dd0-d3a8-48be-a424-dd4f74020cb9
+# ╠═8fcb0dd0-d3a8-48be-a424-dd4f74020cb9
 # ╟─bdf15214-77ba-46e8-bcf6-9b993062edb3
 # ╟─eca7efae-9123-4bac-a0a6-1175ecdd902a
 # ╠═bc9a578e-ff19-417a-8c0d-9713b653950d
@@ -3628,6 +3742,7 @@ version = "1.9.2+0"
 # ╠═3390e29f-bfc0-410f-9b8f-3d3de3acfc54
 # ╠═ee209725-647b-4858-8a7f-bfde79dd80aa
 # ╠═525d7b48-8171-46da-8598-a9ec992eab08
+# ╠═b2fb9bff-ba46-4cd9-8da8-05e88a10624f
 # ╟─3d67bdde-d719-433f-a1a9-c80564723ed8
 # ╟─8e3176fb-7f0a-453b-8cd5-bb5bf6d420bb
 # ╟─b8f6f6d0-a211-4525-a7f1-4975420c70e3
@@ -3640,5 +3755,14 @@ version = "1.9.2+0"
 # ╟─1bc9268f-6584-406f-bbec-bfe396d2808c
 # ╟─c8c8ac99-a3db-415d-80fc-8d07889258d9
 # ╟─43e0662d-dd84-4380-8096-e58be6ffb5b9
+# ╠═56db88e4-51ef-44f3-b4f3-d80ff64b911d
+# ╠═f50d07e6-ea5e-4886-8070-ca3ae2088a81
+# ╠═843af876-1cad-4a68-aa1e-6242bfbd8528
+# ╠═f53707ac-8d0e-4639-ad88-1934b16f4ded
+# ╠═02b740ea-4f85-43ba-ab10-b4002a95f036
+# ╠═c90a8566-9088-462f-b7f7-e2780a26394c
+# ╟─d54c3297-0b44-432e-98fd-449c9880e82d
+# ╠═5a435070-5c76-4e3b-8911-1fc1e86151cd
+# ╠═ec197904-7a5d-4d25-a9de-93d498ea6dd9
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
