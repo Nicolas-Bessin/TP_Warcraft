@@ -690,16 +690,18 @@ end
 plot(loss_history_add)
 
 # ╔═╡ 42dad64c-eea5-4aa3-9e24-6336c969fd35
-index_slider
+index_slider_test = md"""
+``n_{test} =`` $(@bind n_test Slider(1:length(test_dataset); default=1, show_value=true))
+"""
 
 # ╔═╡ 694efce0-cb01-4ba2-ab2b-4c420e3cdcfd
 # Data
-plot_image_weights_path(dataset[n]...)
+plot_image_weights_path(test_dataset[n_test]...)
 
 # ╔═╡ 52283a6b-7c43-4783-9e9e-598becf1cbc6
 # Inference
 begin
-	x = dataset[n][1]
+	x = test_dataset[n_test][1]
 	infered_weights = model_add(x)
 	infered_y = bellman_maximizer(infered_weights)
 	plot_image_weights_path(x, infered_y, infered_weights)
@@ -707,12 +709,12 @@ end
 
 # ╔═╡ 71722711-8410-43f7-9e47-0a6cf4aae6f4
 begin
-	function count_diff(model)
+	function count_diff(model, data = test_dataset)
 		diff = 0
-		for i ∈ 1:nb_samples
-			infered_weight = model(dataset[i][1])
+		for i ∈ 1:length(data)
+			infered_weight = model(data[i][1])
 			infered_y = bellman_maximizer(infered_weight)
-			diff += infered_y != dataset[i][2]
+			diff += infered_y != data[i][2]
 		end
 		return diff
 	end
@@ -801,11 +803,11 @@ begin
 end
 
 # ╔═╡ 3390e29f-bfc0-410f-9b8f-3d3de3acfc54
-index_slider
+index_slider_test
 
 # ╔═╡ ee209725-647b-4858-8a7f-bfde79dd80aa
 # Data
-plot_image_weights_path(dataset[n]...)
+plot_image_weights_path(test_dataset[n_test]...)
 
 # ╔═╡ 525d7b48-8171-46da-8598-a9ec992eab08
 # Inference
@@ -880,11 +882,11 @@ begin
 end
 
 # ╔═╡ 7c94cce0-78b9-491d-a14c-5bebb994d76a
-index_slider
+index_slider_test
 
 # ╔═╡ 205450df-6189-4cc4-b738-f4b3d736159d
 # Data
-plot_image_weights_path(dataset[n]...)
+plot_image_weights_path(test_dataset[n_test]...)
 
 # ╔═╡ 695c8987-0270-4235-99f5-a68df3be09a6
 # Inference
@@ -958,11 +960,11 @@ begin
 end
 
 # ╔═╡ f53707ac-8d0e-4639-ad88-1934b16f4ded
-index_slider
+index_slider_test
 
 # ╔═╡ 02b740ea-4f85-43ba-ab10-b4002a95f036
 # Data
-plot_image_weights_path(dataset[n]...)
+plot_image_weights_path(test_dataset[n_test]...)
 
 # ╔═╡ c90a8566-9088-462f-b7f7-e2780a26394c
 # Inference
@@ -3724,7 +3726,7 @@ version = "1.9.2+0"
 # ╠═395ce0a5-53e4-480b-a10c-e0cd7c67ec61
 # ╠═4a3c308c-3f3d-45f0-b7c4-63a2a982e9d8
 # ╠═61c90d84-9eb9-4347-8129-516571459fa9
-# ╠═42dad64c-eea5-4aa3-9e24-6336c969fd35
+# ╟─42dad64c-eea5-4aa3-9e24-6336c969fd35
 # ╠═694efce0-cb01-4ba2-ab2b-4c420e3cdcfd
 # ╠═52283a6b-7c43-4783-9e9e-598becf1cbc6
 # ╠═71722711-8410-43f7-9e47-0a6cf4aae6f4
